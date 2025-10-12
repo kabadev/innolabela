@@ -1,20 +1,20 @@
-import mongoose, { Schema, type Document } from "mongoose"
+import mongoose, { Schema, type Document } from "mongoose";
 
 export interface IAudioAnnotations {
-  transcriptEnglish: string
-  transcriptKrio: string
-  category: string
+  transcriptEnglish: string;
+  transcriptKrio: string;
+  category: string;
 }
 
 export interface IAudioFile extends Document {
-  _id: string
-  name: string
-  url: string
-  duration: number
-  groupId: mongoose.Types.ObjectId
-  annotations: IAudioAnnotations
-  createdAt: Date
-  updatedAt: Date
+  _id: string;
+  name: string;
+  url: string;
+  duration: number;
+  groupId: mongoose.Types.ObjectId;
+  annotations: IAudioAnnotations;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const AudioAnnotationsSchema = new Schema<IAudioAnnotations>(
@@ -23,8 +23,8 @@ const AudioAnnotationsSchema = new Schema<IAudioAnnotations>(
     transcriptKrio: { type: String, default: "" },
     category: { type: String, default: "" },
   },
-  { _id: false },
-)
+  { _id: false }
+);
 
 const AudioFileSchema = new Schema<IAudioFile>(
   {
@@ -36,7 +36,8 @@ const AudioFileSchema = new Schema<IAudioFile>(
   },
   {
     timestamps: true,
-  },
-)
+  }
+);
 
-export default mongoose.models.AudioFile || mongoose.model<IAudioFile>("AudioFile", AudioFileSchema)
+export default mongoose.models.AudioFile ||
+  mongoose.model<IAudioFile>("AudioFile", AudioFileSchema);

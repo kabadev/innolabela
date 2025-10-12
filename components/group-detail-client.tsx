@@ -264,7 +264,7 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 md:overflow-y-auto">
           {group.audioFiles.length === 0 ? (
             <div className="flex items-center justify-center h-full p-4">
               <div className="text-center text-muted-foreground">
@@ -277,7 +277,7 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
               </div>
             </div>
           ) : (
-            <div className="p-2 space-y-1">
+            <div className="p-2 space-y-1 h-screen pb-80  max-md:overflow-y-auto">
               {group.audioFiles.map((file) => (
                 <div
                   key={file.id}
