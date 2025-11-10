@@ -2,27 +2,38 @@
 
 import type React from "react";
 import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { AudioGroup, AudioFile } from "./audio-annotation-system";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FolderOpen, Music, Trash2, Plus } from "lucide-react";
-import { createGroup, deleteGroup } from "@/app/actions";
+import { assignUserToGroup, createGroup, deleteGroup } from "@/app/actions";
 import { Uploader } from "@/components/uploader";
+import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
+import { User } from "@/lib/type";
+import { useUser } from "@clerk/nextjs";
+import { hasPermission, UserRole } from "@/lib/utils";
 
 interface GroupsListClientProps {
+  users?: any;
   initialGroups: AudioGroup[];
 }
 
-export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
+export function GroupsListClient({
+  initialGroups,
+  users,
+}: GroupsListClientProps) {
+  const { user } = useUser();
   const router = useRouter();
+  const pathname = usePathname();
   const [groups, setGroups] = useState<AudioGroup[]>(initialGroups);
+  const [assignLoading, setAssignLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [error, setError] = useState<string>("");
   const [isCreating, setIsCreating] = useState(false);
   const uploaderRef = useRef<{ reset: () => void }>(null);
-
+  const [showAssignDialog, setShowAssignDialog] = useState(false);
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString("en-US", {
       year: "numeric",
@@ -125,8 +136,11 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
 
       // Reset the uploader
       uploaderRef.current?.reset();
-
-      router.push(`/groups/${newGroup.id}`);
+      if (pathname === "/controls/groups") {
+        router.push(`/controls/groups/${newGroup.id}`);
+      } else {
+        router.push(`/groups/${newGroup.id}`);
+      }
     } catch (err) {
       console.error("Create group error:", err);
       setError("Failed to create group. Please try again.");
@@ -151,9 +165,20 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
     uploaderRef.current?.reset();
   };
 
+  const handleAssign = async (userId: string, groupId: string) => {
+    try {
+      setAssignLoading(true);
+      const result = await assignUserToGroup(userId, groupId);
+      setShowAssignDialog(false);
+      router.refresh();
+      setAssignLoading(false);
+    } catch (error) {
+      setAssignLoading(false);
+    }
+  };
   return (
     <div className="h-full flex flex-col">
-      <div className="p-6 border-b">
+      <div className="p-2 md:p-4 border-b">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-semibold">Audio Groups</h2>
@@ -161,10 +186,28 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
               {groups.length} {groups.length === 1 ? "group" : "groups"}
             </p>
           </div>
-          <Button onClick={() => setShowModal(true)} className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Group
-          </Button>
+
+          {user &&
+            hasPermission(user?.publicMetadata?.role as UserRole, [
+              "Admin",
+              "Project Lead",
+              "Technical Lead",
+              // "Annotators"
+            ]) && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={"outline"}
+                  onClick={() => setShowAssignDialog(true)}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Assign Group
+                </Button>
+                <Button onClick={() => setShowModal(true)} className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  Add Group
+                </Button>
+              </div>
+            )}
         </div>
       </div>
 
@@ -173,14 +216,32 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">
               <FolderOpen className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <h3 className="text-lg font-medium mb-2">No groups yet</h3>
+              <h3 className="text-lg font-medium mb-2">
+                No audio groups available
+              </h3>
               <p className="text-sm mb-4">
-                Create a group and upload audio files to get started
+                {user &&
+                hasPermission(user?.publicMetadata?.role as UserRole, [
+                  "Admin",
+                  "Project Lead",
+                  "Technical Lead",
+                  // "Annotators"
+                ])
+                  ? "Get started by creating your first audio group."
+                  : "Please contact your administrator to assign audio groups to you."}
               </p>
-              <Button onClick={() => setShowModal(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Create First Group
-              </Button>
+              {user &&
+                hasPermission(user?.publicMetadata?.role as UserRole, [
+                  "Admin",
+                  "Project Lead",
+                  "Technical Lead",
+                  // "Annotators"
+                ]) && (
+                  <Button onClick={() => setShowModal(true)} className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    Add Group
+                  </Button>
+                )}
             </div>
           </div>
         ) : (
@@ -189,30 +250,42 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
               <Card
                 key={group.id}
                 className="p-4 cursor-pointer transition-all hover:shadow-md hover:border-primary/50 group"
-                onClick={() => router.push(`/groups/${group.id}`)}
+                onClick={() =>
+                  pathname === "/controls/groups"
+                    ? router.push(`/controls/groups/${group.id}`)
+                    : router.push(`/groups/${group.id}`)
+                }
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <FolderOpen className="w-5 h-5 text-primary" />
                     <h3 className="font-semibold">{group.name}</h3>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (
-                        confirm(
-                          `Delete group "${group.name}"? This will remove all audio files in this group.`
-                        )
-                      ) {
-                        handleDeleteGroup(group.id);
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
+                  {user &&
+                    hasPermission(user?.publicMetadata?.role as UserRole, [
+                      "Admin",
+                      // "Supervisor",
+                      "Project Lead",
+                      // "Technical Lead",
+                    ]) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (
+                            confirm(
+                              `Delete group "${group.name}"? This will remove all audio files in this group.`
+                            )
+                          ) {
+                            handleDeleteGroup(group.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    )}
                 </div>
 
                 <div className="space-y-2 text-sm">
@@ -310,6 +383,15 @@ export function GroupsListClient({ initialGroups }: GroupsListClientProps) {
           </Card>
         </div>
       )}
+
+      <AssignGroupDialog
+        users={users!}
+        groups={initialGroups}
+        open={showAssignDialog}
+        onOpenChange={setShowAssignDialog}
+        onAssign={handleAssign}
+        loading={assignLoading}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import type React from "react";
 
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   AudioGroup,
   AudioFileWithSegments,
@@ -21,6 +21,9 @@ import {
   updateAudioAnnotations,
 } from "@/app/actions";
 import { Uploader } from "./uploader";
+import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
+import { useUser } from "@clerk/nextjs";
+import { hasPermission, UserRole } from "@/lib/utils";
 
 interface GroupDetailClientProps {
   initialGroup: AudioGroup;
@@ -28,6 +31,8 @@ interface GroupDetailClientProps {
 
 export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
   const router = useRouter();
+  const { user } = useUser();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [group, setGroup] = useState<AudioGroup>(initialGroup);
   const [isDragging, setIsDragging] = useState(false);
@@ -221,37 +226,52 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
   };
 
   return (
-    <div className="h-full flex flex-col lg:flex-row">
+    <div className=" flex flex-col lg:flex-row">
       {/* Left Sidebar - Audio List - Hidden on mobile when audio is selected */}
       <div
         className={`${
           selectedAudio ? "hidden lg:flex" : "flex"
         } w-full lg:w-80 border-r flex-col bg-muted/30`}
       >
-        <div className="p-4 border-b bg-background">
+        <div className="p-4 border-b ">
           <div className="flex items-center gap-2 mb-3">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push("/groups")}
+              onClick={() =>
+                pathname.startsWith("/groups")
+                  ? router.push("/groups")
+                  : router.push("/controls/groups")
+              }
               className="h-8 w-8 p-0"
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <h3 className="font-semibold">Audio Files</h3>
           </div>
-          <div className="flex items-center justify-between mb-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setShowUploadModal(true)}
-              disabled={group.audioFiles.length >= 100}
-              className="flex-1"
-            >
-              <Upload className="w-3 h-3 mr-1" />
-              Add Files
-            </Button>
-          </div>
+          {user &&
+          hasPermission(user?.publicMetadata?.role as UserRole, [
+            "Admin",
+            // "Supervisor",
+            "Project Lead",
+            // "Technical Lead",
+          ]) ? (
+            <div className="flex items-center justify-between mb-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowUploadModal(true)}
+                disabled={group.audioFiles.length >= 100}
+                className="flex-1"
+              >
+                <Upload className="w-3 h-3 mr-1" />
+                Add Files
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between p-6"></div>
+          )}
+
           <p className="text-xs text-muted-foreground">
             {group.audioFiles.length} / 100 files • {getAnnotatedCount()}{" "}
             annotated
@@ -264,20 +284,31 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
           </div>
         </div>
 
-        <div className="flex-1 md:overflow-y-auto">
+        <div className="  overflow-y-auto">
           {group.audioFiles.length === 0 ? (
-            <div className="flex items-center justify-center h-full p-4">
+            <div className="h-[calc(100vh-220px)] overflow-y-auto flex items-center justify-center p-4">
               <div className="text-center text-muted-foreground">
                 <Music className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p className="text-sm mb-3">No audio files</p>
-                <Button size="sm" onClick={() => setShowUploadModal(true)}>
-                  <Upload className="w-3 h-3 mr-1" />
-                  Add Files
-                </Button>
+                {user &&
+                  hasPermission(user?.publicMetadata?.role as UserRole, [
+                    "Admin",
+                    // "Supervisor",
+                    "Project Lead",
+                    "Technical Lead",
+                  ]) && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowUploadModal(true)}
+                    >
+                      <Upload className="w-3 h-3 mr-1" />
+                      Add Audio Files
+                    </Button>
+                  )}
               </div>
             </div>
           ) : (
-            <div className="p-2 space-y-1 h-screen pb-80  max-md:overflow-y-auto">
+            <div className="p-2 space-y-1 h-[calc(100vh-220px)] overflow-y-auto">
               {group.audioFiles.map((file) => (
                 <div
                   key={file.id}
@@ -304,19 +335,28 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
                         </div>
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`Delete "${file.name}"?`)) {
-                          handleDeleteAudio(file.id);
-                        }
-                      }}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+
+                    {user &&
+                      hasPermission(user?.publicMetadata?.role as UserRole, [
+                        "Admin",
+                        // "Supervisor",
+                        "Project Lead",
+                        // "Technical Lead",
+                      ]) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete "${file.name}"?`)) {
+                              handleDeleteAudio(file.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
                   </div>
                 </div>
               ))}
@@ -327,9 +367,9 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
 
       {/* Right Side - Audio Player - Full screen on mobile, side-by-side on desktop */}
       <div
-        className={`${
+        className={`w-full md:w-[calc(100%-20rem)] ${
           selectedAudio ? "flex" : "hidden lg:flex"
-        } flex-1 overflow-y-auto flex-col`}
+        }  overflow-y-auto flex-col `}
       >
         {selectedAudio ? (
           <SimpleAudioPlayer
@@ -338,8 +378,8 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             onClose={handleClosePlayer}
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
+          <div className="h-[calc(100vh-65px)] w-full  flex items-center justify-center text-muted-foreground">
+            <div className="text-center w-full">
               <Music className="w-16 h-16 mx-auto mb-4 opacity-50" />
               <h3 className="text-lg font-medium mb-2">No audio selected</h3>
               <p className="text-sm">

@@ -395,7 +395,7 @@ export function SimpleAudioPlayer({
   }, []);
 
   return (
-    <div className="h-full flex flex-col p-4 lg:p-6 bg-background">
+    <div className="h-[calc(100vh-65px)]  flex flex-col p-4 lg:p-6 ">
       <audio ref={audioRef} src={audioFile.url} />
 
       {/* Mobile Back Button */}
@@ -431,7 +431,7 @@ export function SimpleAudioPlayer({
               ref={waveformRef}
               width={800}
               height={200}
-              className="w-full h-32 lg:h-48 border rounded-md bg-gray-600 cursor-crosshair"
+              className="w-full h-32 lg:h-48 border rounded-md bg-indigo-950 cursor-crosshair"
               onMouseDown={handleWaveformMouseDown}
               onMouseMove={handleWaveformMouseMove}
               onMouseUp={handleWaveformMouseUp}

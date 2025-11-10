@@ -1,48 +1,49 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { GroupsList } from "./groups-list"
-import { GroupDetail } from "./group-detail"
+import { useState } from "react";
+import { GroupsList } from "./groups-list";
+import { GroupDetail } from "./group-detail";
 
 export interface AudioFile {
-  id: string
-  file: File
-  url: string
-  name: string
-  duration: number
+  id: string;
+  file?: File;
+  url: string;
+  name: string;
+  duration: number;
 }
 
 export interface AudioAnnotations {
-  transcriptEnglish: string
-  transcriptKrio: string
-  category: string
+  transcriptEnglish: string;
+  transcriptKrio: string;
+  category: string;
 }
 
 export interface AudioFileWithSegments extends AudioFile {
-  annotations?: AudioAnnotations
-  groupId: string
+  annotations?: AudioAnnotations;
+  groupId: string;
 }
 
 export interface AudioGroup {
-  id: string
-  name: string
-  dateAdded: Date
-  audioFiles: AudioFileWithSegments[]
+  id: string;
+  name: string;
+  dateAdded: Date;
+  audioFiles: AudioFileWithSegments[];
 }
 
 export function AudioAnnotationSystem() {
-  const [groups, setGroups] = useState<AudioGroup[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<AudioGroup | null>(null)
-  const [selectedAudio, setSelectedAudio] = useState<AudioFileWithSegments | null>(null)
-  const [view, setView] = useState<"groups" | "group-detail">("groups")
+  const [groups, setGroups] = useState<AudioGroup[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<AudioGroup | null>(null);
+  const [selectedAudio, setSelectedAudio] =
+    useState<AudioFileWithSegments | null>(null);
+  const [view, setView] = useState<"groups" | "group-detail">("groups");
 
   const handleFilesUploaded = (files: AudioFile[], groupId?: string) => {
-    let targetGroup: AudioGroup
+    let targetGroup: AudioGroup;
 
     if (groupId) {
       // Adding to existing group
-      const group = groups.find((g) => g.id === groupId)
-      if (!group) return
+      const group = groups.find((g) => g.id === groupId);
+      if (!group) return;
 
       const filesWithSegments: AudioFileWithSegments[] = files.map((file) => ({
         ...file,
@@ -52,17 +53,19 @@ export function AudioAnnotationSystem() {
           transcriptKrio: "",
           category: "",
         },
-      }))
+      }));
 
       targetGroup = {
         ...group,
         audioFiles: [...group.audioFiles, ...filesWithSegments],
-      }
+      };
 
-      setGroups((prev) => prev.map((g) => (g.id === groupId ? targetGroup : g)))
+      setGroups((prev) =>
+        prev.map((g) => (g.id === groupId ? targetGroup : g))
+      );
     } else {
       // Create new group
-      const newGroupId = `group-${Date.now()}`
+      const newGroupId = `group-${Date.now()}`;
       const filesWithSegments: AudioFileWithSegments[] = files.map((file) => ({
         ...file,
         groupId: newGroupId,
@@ -71,74 +74,80 @@ export function AudioAnnotationSystem() {
           transcriptKrio: "",
           category: "",
         },
-      }))
+      }));
 
       targetGroup = {
         id: newGroupId,
         name: `Group ${groups.length + 1}`,
         dateAdded: new Date(),
         audioFiles: filesWithSegments,
-      }
+      };
 
-      setGroups((prev) => [...prev, targetGroup])
+      setGroups((prev) => [...prev, targetGroup]);
     }
 
-    setSelectedGroup(targetGroup)
-    setView("group-detail")
-  }
+    setSelectedGroup(targetGroup);
+    setView("group-detail");
+  };
 
   const handleSaveAnnotations = (annotations: AudioAnnotations) => {
-    if (!selectedAudio || !selectedGroup) return
+    if (!selectedAudio || !selectedGroup) return;
 
     const updatedGroup = {
       ...selectedGroup,
       audioFiles: selectedGroup.audioFiles.map((file) =>
-        file.id === selectedAudio.id ? { ...file, annotations } : file,
+        file.id === selectedAudio.id ? { ...file, annotations } : file
       ),
-    }
+    };
 
-    setGroups((prev) => prev.map((g) => (g.id === selectedGroup.id ? updatedGroup : g)))
-    setSelectedGroup(updatedGroup)
-    setSelectedAudio((prev) => (prev ? { ...prev, annotations } : null))
-  }
+    setGroups((prev) =>
+      prev.map((g) => (g.id === selectedGroup.id ? updatedGroup : g))
+    );
+    setSelectedGroup(updatedGroup);
+    setSelectedAudio((prev) => (prev ? { ...prev, annotations } : null));
+  };
 
   const handleSelectGroup = (group: AudioGroup) => {
-    setSelectedGroup(group)
-    setView("group-detail")
-  }
+    setSelectedGroup(group);
+    setView("group-detail");
+  };
 
   const handleSelectAudio = (audio: AudioFileWithSegments) => {
-    setSelectedAudio(audio)
-  }
+    setSelectedAudio(audio);
+  };
 
   const handleBackToGroups = () => {
-    setSelectedGroup(null)
-    setSelectedAudio(null)
-    setView("groups")
-  }
+    setSelectedGroup(null);
+    setSelectedAudio(null);
+    setView("groups");
+  };
 
   const handleDeleteGroup = (groupId: string) => {
-    setGroups((prev) => prev.filter((g) => g.id !== groupId))
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
     if (selectedGroup?.id === groupId) {
-      handleBackToGroups()
+      handleBackToGroups();
     }
-  }
+  };
 
   const handleDeleteAudio = (audioId: string) => {
-    if (!selectedGroup) return
+    if (!selectedGroup) return;
 
     const updatedGroup = {
       ...selectedGroup,
-      audioFiles: selectedGroup.audioFiles.filter((file) => file.id !== audioId),
-    }
+      audioFiles: selectedGroup.audioFiles.filter(
+        (file) => file.id !== audioId
+      ),
+    };
 
-    setGroups((prev) => prev.map((g) => (g.id === selectedGroup.id ? updatedGroup : g)))
-    setSelectedGroup(updatedGroup)
+    setGroups((prev) =>
+      prev.map((g) => (g.id === selectedGroup.id ? updatedGroup : g))
+    );
+    setSelectedGroup(updatedGroup);
 
     if (selectedAudio?.id === audioId) {
-      setSelectedAudio(null)
+      setSelectedAudio(null);
     }
-  }
+  };
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -149,20 +158,26 @@ export function AudioAnnotationSystem() {
             <h1 className="text-2xl font-bold">Audio Annotation System</h1>
             {view === "group-detail" && selectedGroup && (
               <p className="text-sm text-muted-foreground mt-1">
-                {selectedGroup.name} • {selectedGroup.audioFiles.length} / 100 files
+                {selectedGroup.name} • {selectedGroup.audioFiles.length} / 100
+                files
                 {selectedAudio && ` • ${selectedAudio.name}`}
               </p>
             )}
           </div>
           {view !== "groups" && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <button onClick={handleBackToGroups} className="hover:text-foreground transition-colors">
+              <button
+                onClick={handleBackToGroups}
+                className="hover:text-foreground transition-colors"
+              >
                 Groups
               </button>
               {selectedGroup && (
                 <>
                   <span>/</span>
-                  <span className="text-foreground font-medium">{selectedGroup.name}</span>
+                  <span className="text-foreground font-medium">
+                    {selectedGroup.name}
+                  </span>
                 </>
               )}
             </div>
@@ -193,5 +208,5 @@ export function AudioAnnotationSystem() {
         )}
       </div>
     </div>
-  )
+  );
 }
