@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +21,7 @@ import {
   Save,
   Sparkles,
   ArrowLeft,
+  X,
 } from "lucide-react";
 import type { AudioFileWithSegments } from "./audio-annotation-system";
 import { translateAi, transscribeKrioAi } from "@/app/transcribe";
@@ -47,7 +48,8 @@ export function SimpleAudioPlayer({
   const [loopStart, setLoopStart] = useState<number | null>(null);
   const [loopEnd, setLoopEnd] = useState<number | null>(null);
   const [isLooping, setIsLooping] = useState(false);
-  const [isSelecting, setIsSelecting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartTime, setDragStartTime] = useState<number | null>(null);
   const [waveformData, setWaveformData] = useState<number[]>([]);
   const [transcriptEnglish, setTranscriptEnglish] = useState("");
   const [transcriptKrio, setTranscriptKrio] = useState("");
@@ -57,38 +59,39 @@ export function SimpleAudioPlayer({
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLCanvasElement>(null);
 
+  // Use refs for loop values so the timeupdate handler always has fresh data
+  // without needing to be re-registered on every state change.
+  const loopStartRef = useRef<number | null>(null);
+  const loopEndRef = useRef<number | null>(null);
+  const isLoopingRef = useRef(false);
+
+  useEffect(() => { loopStartRef.current = loopStart; }, [loopStart]);
+  useEffect(() => { loopEndRef.current = loopEnd; }, [loopEnd]);
+  useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
+
+  // ─── Waveform generation ───────────────────────────────────────────────────
   useEffect(() => {
     if (!audioFile?.url) return;
-    setTranscriptEnglish(audioFile?.annotations?.transcriptEnglish! || "");
-    setTranscriptKrio(audioFile?.annotations?.transcriptKrio || "");
-    setCategory(audioFile?.annotations?.category || "");
+    setTranscriptEnglish(audioFile?.annotations?.transcriptEnglish ?? "");
+    setTranscriptKrio(audioFile?.annotations?.transcriptKrio ?? "");
+    setCategory(audioFile?.annotations?.category ?? "");
+
     const generateWaveform = async () => {
       try {
         const response = await fetch(
-          // https://innolabela.vercel.app/groups
-          // `http://localhost:3000/api/proxy-audio?url=${encodeURIComponent(
-          `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(
-            audioFile.url
-          )}`
+          `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`
         );
-
         const arrayBuffer = await response.arrayBuffer();
-
         const AudioContextClass =
           window.AudioContext || (window as any).webkitAudioContext;
         const audioContext = new AudioContextClass();
-
-        const audioBuffer = await new Promise<AudioBuffer>(
-          (resolve, reject) => {
-            audioContext.decodeAudioData(arrayBuffer, resolve, reject);
-          }
-        );
-
+        const audioBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+          audioContext.decodeAudioData(arrayBuffer, resolve, reject);
+        });
         const channelData = audioBuffer.getChannelData(0);
         const samples = 800;
         const blockSize = Math.floor(channelData.length / samples);
         const waveform: number[] = [];
-
         for (let i = 0; i < samples; i++) {
           let sum = 0;
           for (let j = 0; j < blockSize; j++) {
@@ -96,75 +99,85 @@ export function SimpleAudioPlayer({
           }
           waveform.push(sum / blockSize);
         }
-
         setWaveformData(waveform);
       } catch (err) {
         console.error("[Waveform] Error:", err);
-        const fallback = Array.from({ length: 800 }, () => Math.random() * 0.5);
-        setWaveformData(fallback);
+        setWaveformData(Array.from({ length: 800 }, () => Math.random() * 0.5));
       }
     };
 
     if (typeof window !== "undefined") generateWaveform();
   }, [audioFile?.url]);
 
+  // ─── Draw waveform ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const drawWaveform = () => {
-      const canvas = waveformRef.current;
-      if (!canvas || waveformData.length === 0) return;
+    const canvas = waveformRef.current;
+    if (!canvas || waveformData.length === 0) return;
 
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-      const { width, height } = canvas;
-      ctx.clearRect(0, 0, width, height);
+    // Always draw at the canvas's internal resolution (800×200).
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
 
-      ctx.fillStyle = "#e5e7eb";
-      const barWidth = width / waveformData.length;
-      const centerY = height / 2;
+    // Base waveform bars
+    const barWidth = width / waveformData.length;
+    const centerY = height / 2;
+    const progressFraction = duration > 0 ? currentTime / duration : 0;
 
-      waveformData.forEach((amplitude, i) => {
-        const barHeight = amplitude * height * 0.8;
-        const x = i * barWidth;
-        ctx.fillRect(x, centerY - barHeight / 2, barWidth - 0.5, barHeight);
-      });
+    waveformData.forEach((amplitude, i) => {
+      const barHeight = Math.max(2, amplitude * height * 0.85);
+      const x = i * barWidth;
+      const fraction = i / waveformData.length;
 
-      if (loopStart !== null && loopEnd !== null && duration > 0) {
-        const startX = (loopStart / duration) * width;
-        const endX = (loopEnd / duration) * width;
+      // Colour bars: played = bright, upcoming = dim
+      ctx.fillStyle = fraction < progressFraction ? "#818cf8" : "#334155";
+      ctx.fillRect(x, centerY - barHeight / 2, Math.max(barWidth - 1, 0.5), barHeight);
+    });
 
-        ctx.fillStyle = "rgba(34, 197, 94, 0.2)";
-        ctx.fillRect(startX, 0, endX - startX, height);
+    // Loop region highlight
+    if (loopStart !== null && loopEnd !== null && duration > 0) {
+      const startX = (Math.min(loopStart, loopEnd) / duration) * width;
+      const endX   = (Math.max(loopStart, loopEnd) / duration) * width;
 
-        ctx.strokeStyle = "#22c55e";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(startX, 0);
-        ctx.lineTo(startX, height);
-        ctx.moveTo(endX, 0);
-        ctx.lineTo(endX, height);
-        ctx.stroke();
-      }
+      ctx.fillStyle = "rgba(52, 211, 153, 0.18)";
+      ctx.fillRect(startX, 0, endX - startX, height);
 
-      if (duration > 0) {
-        const playheadX = (currentTime / duration) * width;
-        ctx.strokeStyle = "#ef4444";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(playheadX, 0);
-        ctx.lineTo(playheadX, height);
-        ctx.stroke();
+      ctx.strokeStyle = "#34d399";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(startX, 0); ctx.lineTo(startX, height);
+      ctx.moveTo(endX, 0);   ctx.lineTo(endX, height);
+      ctx.stroke();
 
-        ctx.fillStyle = "#ef4444";
-        ctx.beginPath();
-        ctx.arc(playheadX, 10, 4, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-    };
+      // Loop region labels
+      ctx.fillStyle = "#34d399";
+      ctx.font = "10px monospace";
+      if (startX > 4)       ctx.fillText("▶", startX + 3, 12);
+      if (endX < width - 4) ctx.fillText("◀", endX - 11, 12);
+    }
 
-    drawWaveform();
+    // Playhead
+    if (duration > 0) {
+      const playheadX = progressFraction * width;
+      ctx.strokeStyle = "#f87171";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(playheadX, 0);
+      ctx.lineTo(playheadX, height);
+      ctx.stroke();
+
+      ctx.fillStyle = "#f87171";
+      ctx.beginPath();
+      ctx.arc(playheadX, 8, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
   }, [waveformData, loopStart, loopEnd, currentTime, duration]);
 
+  // ─── Audio event listeners ─────────────────────────────────────────────────
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -172,40 +185,159 @@ export function SimpleAudioPlayer({
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
 
-      if (isLooping && loopStart !== null && loopEnd !== null && isPlaying) {
-        if (audio.currentTime >= loopEnd) {
-          audio.currentTime = loopStart;
+      // Use refs so this handler doesn't need to be re-registered
+      if (
+        isLoopingRef.current &&
+        loopStartRef.current !== null &&
+        loopEndRef.current !== null
+      ) {
+        const end = Math.max(loopStartRef.current, loopEndRef.current);
+        // Seek back slightly before the boundary to avoid a gap
+        if (audio.currentTime >= end - 0.05) {
+          audio.currentTime = Math.min(loopStartRef.current, loopEndRef.current);
         }
       }
     };
 
     const handleLoadedMetadata = () => setDuration(audio.duration);
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handleEnded = () => {
+      // If looping, restart immediately
+      if (isLoopingRef.current && loopStartRef.current !== null) {
+        audio.currentTime = Math.min(
+          loopStartRef.current,
+          loopEndRef.current ?? loopStartRef.current
+        );
+        audio.play();
+      } else {
+        setIsPlaying(false);
+      }
+    };
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("play",  () => setIsPlaying(true));
+    audio.addEventListener("pause", () => setIsPlaying(false));
+    audio.addEventListener("ended", handleEnded);
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("play",  () => setIsPlaying(true));
+      audio.removeEventListener("pause", () => setIsPlaying(false));
+      audio.removeEventListener("ended", handleEnded);
     };
-  }, [audioFile, isLooping, loopStart, loopEnd, isPlaying]);
+  }, [audioFile]);
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+  const togglePlayPause = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) audio.play();
+    else audio.pause();
+  }, []);
+
+  const seekRelative = useCallback((seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + seconds));
+  }, []);
+
+  const seekToFraction = useCallback((fraction: number) => {
+    const audio = audioRef.current;
+    if (!audio || !duration) return;
+    audio.currentTime = Math.max(0, Math.min(duration, fraction * duration));
+  }, [duration]);
+
+  // Convert a MouseEvent on the canvas to a time value using rendered size
+  const eventToTime = useCallback((e: React.MouseEvent): number => {
+    const canvas = waveformRef.current;
+    if (!canvas || !duration) return 0;
+    const rect = canvas.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return fraction * duration;
+  }, [duration]);
+
+  // ─── Waveform interaction ──────────────────────────────────────────────────
+  const handleWaveformMouseDown = (e: React.MouseEvent) => {
+    if (!duration) return;
+    const t = eventToTime(e);
+    setDragStartTime(t);
+    setIsDragging(true);
+    // Reset loop; will only commit if user actually drags
+    setLoopStart(t);
+    setLoopEnd(t);
+    setIsLooping(false);
+  };
+
+  const handleWaveformMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || dragStartTime === null) return;
+    const t = eventToTime(e);
+    setLoopStart(Math.min(dragStartTime, t));
+    setLoopEnd(Math.max(dragStartTime, t));
+  };
+
+  const handleWaveformMouseUp = (e: React.MouseEvent) => {
+    if (!isDragging || dragStartTime === null) return;
+    setIsDragging(false);
+
+    const t = eventToTime(e);
+    const start = Math.min(dragStartTime, t);
+    const end   = Math.max(dragStartTime, t);
+
+    if (end - start > 0.15) {
+      // Committed region — enable loop
+      setLoopStart(start);
+      setLoopEnd(end);
+      setIsLooping(true);
+      const audio = audioRef.current;
+      if (audio) audio.currentTime = start;
+    } else {
+      // Treat as a simple seek click
+      seekToFraction((e.clientX - (waveformRef.current?.getBoundingClientRect().left ?? 0)) /
+        (waveformRef.current?.getBoundingClientRect().width ?? 1));
+      setLoopStart(null);
+      setLoopEnd(null);
+    }
+
+    setDragStartTime(null);
+  };
+
+  const handleWaveformMouseLeave = (e: React.MouseEvent) => {
+    // If still dragging when mouse leaves, commit what we have
+    if (isDragging) handleWaveformMouseUp(e);
+  };
+
+  const toggleLoop = () => {
+    if (loopStart !== null && loopEnd !== null) {
+      const next = !isLooping;
+      setIsLooping(next);
+      if (next) {
+        // Jump to loop start when re-enabling
+        const audio = audioRef.current;
+        if (audio) audio.currentTime = Math.min(loopStart, loopEnd);
+      }
+    }
+  };
+
+  const clearLoop = () => {
+    setLoopStart(null);
+    setLoopEnd(null);
+    setIsLooping(false);
+  };
+
+  // ─── Keyboard shortcuts — use refs so handlers never go stale ─────────────
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
   useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const active = document.activeElement;
       const isTyping =
-        activeElement &&
-        (activeElement.tagName === "INPUT" ||
-          activeElement.tagName === "TEXTAREA" ||
-          activeElement.tagName === "SELECT" ||
-          activeElement.getAttribute("contenteditable") === "true");
-
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.tagName === "SELECT" ||
+          active.getAttribute("contenteditable") === "true");
       if (isTyping) return;
 
       switch (e.key) {
@@ -222,190 +354,75 @@ export function SimpleAudioPlayer({
           seekRelative(1);
           break;
         case "l":
+        case "L":
           e.preventDefault();
           toggleLoop();
           break;
         case "c":
+        case "C":
           e.preventDefault();
           clearLoop();
+          break;
+        case "Escape":
+          if (window.innerWidth < 1024) onClose?.();
           break;
       }
     };
 
-    window.addEventListener("keydown", handleKeyPress);
-    return () => window.removeEventListener("keydown", handleKeyPress);
-  }, [loopStart, loopEnd]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // togglePlayPause & seekRelative are stable useCallback refs; toggleLoop/clearLoop
+    // are inline but only use setState so this is fine with the exhaustive list below.
+  }, [togglePlayPause, seekRelative, loopStart, loopEnd, isLooping, onClose]);
 
-  const togglePlayPause = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.pause();
-    } else {
-      audio.play();
-    }
-  };
-
-  const seekRelative = (seconds: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    audio.currentTime = Math.max(
-      0,
-      Math.min(duration, audio.currentTime + seconds)
-    );
-  };
-
-  const seekToTime = (time: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    audio.currentTime = Math.max(0, Math.min(duration, time));
-  };
-
-  const handleWaveformMouseDown = (e: React.MouseEvent) => {
-    const canvas = waveformRef.current;
-    if (!canvas || duration === 0) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const clickTime = (x / canvas.width) * duration;
-
-    setIsSelecting(true);
-    setLoopStart(clickTime);
-    setLoopEnd(clickTime);
-    setIsLooping(false);
-  };
-
-  const handleWaveformMouseMove = (e: React.MouseEvent) => {
-    if (!isSelecting) return;
-
-    const canvas = waveformRef.current;
-    if (!canvas || duration === 0) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const moveTime = (x / canvas.width) * duration;
-
-    if (loopStart !== null) {
-      setLoopEnd(moveTime);
-    }
-  };
-
-  const handleWaveformMouseUp = () => {
-    if (isSelecting && loopStart !== null && loopEnd !== null) {
-      const start = Math.min(loopStart, loopEnd);
-      const end = Math.max(loopStart, loopEnd);
-
-      if (end - start > 0.1) {
-        setLoopStart(start);
-        setLoopEnd(end);
-        setIsLooping(true);
-        seekToTime(start);
-        console.log("[v0] Created loop region:", start, "to", end);
-      } else {
-        seekToTime(loopStart);
-        setLoopStart(null);
-        setLoopEnd(null);
-      }
-    }
-    setIsSelecting(false);
-  };
-
-  const toggleLoop = () => {
-    if (loopStart !== null && loopEnd !== null) {
-      setIsLooping(!isLooping);
-      console.log("[v0] Toggled loop:", !isLooping);
-    }
-  };
-
-  const clearLoop = () => {
-    setLoopStart(null);
-    setLoopEnd(null);
-    setIsLooping(false);
-    console.log("[v0] Cleared loop region");
-  };
-
+  // ─── Annotations ───────────────────────────────────────────────────────────
   const handleSave = () => {
-    if (onSave) {
-      onSave({
-        transcriptEnglish,
-        transcriptKrio,
-        category,
-      });
-      setHasUnsavedChanges(false);
-      console.log("[v0] Saved annotations for:", audioFile.name);
-    }
-  };
-
-  const handleAnnotationChange = () => {
-    setHasUnsavedChanges(true);
-  };
-
-  const formatTime = (time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    const milliseconds = Math.floor((time % 1) * 100);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}.${milliseconds
-      .toString()
-      .padStart(2, "0")}`;
+    onSave?.({ transcriptEnglish, transcriptKrio, category });
+    setHasUnsavedChanges(false);
   };
 
   const handleTranslate = async () => {
     try {
       setIsLoading(true);
-      const translatedEglish = await translateAi(transcriptKrio);
-      setTranscriptEnglish(translatedEglish);
+      setTranscriptEnglish(await translateAi(transcriptKrio));
+    } catch (err) {
+      console.error("Translation error:", err);
+    } finally {
       setIsLoading(false);
-    } catch (error) {
-      setIsLoading(false);
-      console.log("error:", error);
     }
   };
 
   const handleTranscribe = async () => {
     try {
       setIsLoading(true);
-      const text = await transscribeKrioAi(audioFile.url);
-      setTranscriptKrio(text);
+      setTranscriptKrio(await transscribeKrioAi(audioFile.url));
+    } catch (err) {
+      console.error("Transcription error:", err);
+    } finally {
       setIsLoading(false);
-    } catch (error) {
-      setIsLoading(false);
-      console.log("error:", error);
     }
   };
 
-  const handleClose = () => {
-    if (onClose) {
-      onClose();
-    }
+  const formatTime = (time: number) => {
+    const m  = Math.floor(time / 60);
+    const s  = Math.floor(time % 60);
+    const ms = Math.floor((time % 1) * 100);
+    return `${m}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Handle Escape key to close on mobile
-      if (e.key === "Escape" && window.innerWidth < 1024) {
-        handleClose();
-      }
-    };
+  const loopDuration =
+    loopStart !== null && loopEnd !== null
+      ? Math.abs(loopEnd - loopStart)
+      : null;
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100vh-65px)]  flex flex-col p-4 lg:p-6 ">
-      <audio ref={audioRef} src={audioFile.url} />
+    <div className="h-[calc(100vh-65px)] flex flex-col p-4 lg:p-6">
+      <audio ref={audioRef} src={audioFile.url} preload="metadata" />
 
-      {/* Mobile Back Button */}
+      {/* Mobile back button */}
       <div className="mb-4 lg:hidden">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleClose}
-          className="flex items-center gap-2 -ml-2"
-        >
+        <Button variant="ghost" size="sm" onClick={onClose} className="flex items-center gap-2 -ml-2">
           <ArrowLeft className="w-4 h-4" />
           Back to List
         </Button>
@@ -416,52 +433,60 @@ export function SimpleAudioPlayer({
           {audioFile.name}
         </h2>
         <p className="text-xs lg:text-sm text-muted-foreground">
-          <span className="hidden sm:inline">
-            Click and drag on the waveform to select a region to loop
-          </span>
-          <span className="sm:hidden">Tap waveform to play/pause</span>
+          <span className="hidden sm:inline">Click & drag to select a loop region · click to seek</span>
+          <span className="sm:hidden">Tap waveform to seek</span>
         </p>
       </div>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 overflow-y-auto pb-4">
-        {/* Audio Player Section */}
-        <div className="space-y-4 lg:space-y-6">
-          <div className="relative">
+
+        {/* ── Audio Player ── */}
+        <div className="space-y-4 lg:space-y-5">
+
+          {/* Waveform canvas */}
+          <div className="relative select-none">
             <canvas
               ref={waveformRef}
               width={800}
               height={200}
-              className="w-full h-32 lg:h-48 border rounded-md bg-indigo-950 cursor-crosshair"
+              className="w-full h-32 lg:h-48 border rounded-lg bg-slate-900 cursor-crosshair"
+              style={{ cursor: isDragging ? "col-resize" : "crosshair" }}
               onMouseDown={handleWaveformMouseDown}
               onMouseMove={handleWaveformMouseMove}
               onMouseUp={handleWaveformMouseUp}
-              onMouseLeave={handleWaveformMouseUp}
+              onMouseLeave={handleWaveformMouseLeave}
             />
+
             {waveformData.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-600 border rounded-md">
-                <span className="text-gray-500 text-sm">
-                  Loading waveform...
-                </span>
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-900 border rounded-lg">
+                <span className="text-slate-500 text-sm animate-pulse">Loading waveform…</span>
+              </div>
+            )}
+
+            {/* Drag hint overlay while dragging */}
+            {isDragging && loopStart !== null && loopEnd !== null && Math.abs(loopEnd - loopStart) > 0.1 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-emerald-900/80 text-emerald-300 text-xs px-2 py-0.5 rounded pointer-events-none">
+                {formatTime(Math.min(loopStart, loopEnd))} → {formatTime(Math.max(loopStart, loopEnd))}
               </div>
             )}
           </div>
 
-          <div className="flex items-center gap-2 lg:gap-4 flex-wrap">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => seekRelative(-5)}
-            >
+          {/* Transport controls */}
+          <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => seekRelative(-5)} title="Back 5s">
               <SkipBack className="w-4 h-4" />
             </Button>
-            <Button onClick={togglePlayPause} size="lg">
-              {isPlaying ? (
-                <Pause className="w-5 h-5" />
-              ) : (
-                <Play className="w-5 h-5" />
-              )}
+
+            <Button
+              onClick={togglePlayPause}
+              size="lg"
+              className="min-w-[52px]"
+              title="Play / Pause (Space)"
+            >
+              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => seekRelative(5)}>
+
+            <Button variant="outline" size="sm" onClick={() => seekRelative(5)} title="Forward 5s">
               <SkipForward className="w-4 h-4" />
             </Button>
 
@@ -471,43 +496,62 @@ export function SimpleAudioPlayer({
                   variant={isLooping ? "default" : "outline"}
                   size="sm"
                   onClick={toggleLoop}
-                  className={isLooping ? "bg-green-600 hover:bg-green-700" : ""}
+                  title="Toggle loop (L)"
+                  className={
+                    isLooping
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "border-emerald-500 text-emerald-700 hover:bg-emerald-50"
+                  }
                 >
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  <span className="hidden sm:inline">
-                    {isLooping ? "Stop Loop" : "Start Loop"}
-                  </span>
-                  <span className="sm:hidden">Loop</span>
+                  <RotateCcw className="w-4 h-4 mr-1.5" />
+                  <span>{isLooping ? "Looping" : "Loop"}</span>
                 </Button>
-                <Button variant="outline" size="sm" onClick={clearLoop}>
-                  <span className="hidden sm:inline">Clear Selection</span>
-                  <span className="sm:inline lg:hidden">Clear</span>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearLoop}
+                  title="Clear selection (C)"
+                  className="text-muted-foreground"
+                >
+                  <X className="w-3.5 h-3.5 mr-1" />
+                  <span className="hidden sm:inline">Clear</span>
                 </Button>
               </>
             )}
           </div>
 
-          <div className="text-xs lg:text-sm text-muted-foreground">
-            {formatTime(currentTime)} / {formatTime(duration)}
-            {isLooping && (
-              <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
-                Looping: {formatTime(loopStart || 0)} -{" "}
-                {formatTime(loopEnd || 0)}
+          {/* Time display */}
+          <div className="flex items-center gap-3 text-xs lg:text-sm text-muted-foreground font-mono">
+            <span>{formatTime(currentTime)}</span>
+            <span className="text-slate-400">/</span>
+            <span>{formatTime(duration)}</span>
+
+            {isLooping && loopDuration !== null && (
+              <span className="ml-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-xs font-sans">
+                Loop · {formatTime(loopDuration)}
               </span>
             )}
           </div>
+
+          {/* Loop region info */}
+          {loopStart !== null && loopEnd !== null && !isDragging && (
+            <div className="text-xs text-muted-foreground font-mono bg-muted/40 rounded px-3 py-1.5 flex items-center gap-4">
+              <span>▶ {formatTime(Math.min(loopStart, loopEnd))}</span>
+              <span>◀ {formatTime(Math.max(loopStart, loopEnd))}</span>
+              <span className="text-slate-400">({formatTime(loopDuration!)})</span>
+            </div>
+          )}
         </div>
 
-        {/* Annotation Section */}
-        <div className="space-y-4 lg:space-y-6">
+        {/* ── Annotations ── */}
+        <div className="space-y-4 lg:space-y-5">
           <div className="flex items-center justify-between">
             <h3 className="text-base lg:text-lg font-semibold">Annotations</h3>
             <Button
               onClick={handleSave}
               size="sm"
-              className={
-                hasUnsavedChanges ? "bg-orange-600 hover:bg-orange-700" : ""
-              }
+              className={hasUnsavedChanges ? "bg-orange-600 hover:bg-orange-700" : ""}
             >
               <Save className="w-4 h-4 mr-2" />
               {hasUnsavedChanges ? "Save Changes" : "Save"}
@@ -517,24 +561,14 @@ export function SimpleAudioPlayer({
           <div className="space-y-4">
             <div>
               <Label htmlFor="category">Category</Label>
-              <Select
-                value={category}
-                onValueChange={(value) => {
-                  setCategory(value);
-                  handleAnnotationChange();
-                }}
-              >
+              <Select value={category} onValueChange={(v) => { setCategory(v); setHasUnsavedChanges(true); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="conversation">Conversation</SelectItem>
-                  <SelectItem value="monologue">Monologue</SelectItem>
-                  <SelectItem value="interview">Interview</SelectItem>
-                  <SelectItem value="story">Story</SelectItem>
-                  <SelectItem value="news">News</SelectItem>
-                  <SelectItem value="music">Music</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
+                  {["conversation","monologue","interview","story","news","music","other"].map((v) => (
+                    <SelectItem key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -542,24 +576,16 @@ export function SimpleAudioPlayer({
             <div>
               <div className="flex gap-2 mb-2 flex-wrap items-center">
                 <Label htmlFor="transcript-krio">Transcript (Krio)</Label>
-                <Button
-                  className="cursor-pointer h-8 text-xs"
-                  onClick={handleTranscribe}
-                  size="sm"
-                  disabled={isLoading}
-                >
+                <Button className="cursor-pointer h-8 text-xs" onClick={handleTranscribe} size="sm" disabled={isLoading}>
                   <Sparkles className="w-3 h-3 mr-1" />
-                  {isLoading ? "Transcribing..." : "Pre-transcribe"}
+                  {isLoading ? "Transcribing…" : "Pre-transcribe"}
                 </Button>
               </div>
               <Textarea
                 id="transcript-krio"
-                placeholder="Enter Krio transcript..."
+                placeholder="Enter Krio transcript…"
                 value={transcriptKrio}
-                onChange={(e) => {
-                  setTranscriptKrio(e.target.value);
-                  handleAnnotationChange();
-                }}
+                onChange={(e) => { setTranscriptKrio(e.target.value); setHasUnsavedChanges(true); }}
                 className="min-h-[100px] lg:min-h-[120px] resize-none text-sm"
               />
             </div>
@@ -567,24 +593,16 @@ export function SimpleAudioPlayer({
             <div>
               <div className="flex gap-2 mb-2 flex-wrap items-center">
                 <Label htmlFor="transcript-english">Transcript (English)</Label>
-                <Button
-                  className="cursor-pointer h-8 text-xs"
-                  onClick={handleTranslate}
-                  size="sm"
-                  disabled={isLoading}
-                >
+                <Button className="cursor-pointer h-8 text-xs" onClick={handleTranslate} size="sm" disabled={isLoading}>
                   <Sparkles className="w-3 h-3 mr-1" />
-                  {isLoading ? "Translating..." : "Translate"}
+                  {isLoading ? "Translating…" : "Translate"}
                 </Button>
               </div>
               <Textarea
                 id="transcript-english"
-                placeholder="Enter English transcript..."
+                placeholder="Enter English transcript…"
                 value={transcriptEnglish}
-                onChange={(e) => {
-                  setTranscriptEnglish(e.target.value);
-                  handleAnnotationChange();
-                }}
+                onChange={(e) => { setTranscriptEnglish(e.target.value); setHasUnsavedChanges(true); }}
                 className="min-h-[100px] lg:min-h-[120px] resize-none text-sm"
               />
             </div>
@@ -592,23 +610,21 @@ export function SimpleAudioPlayer({
 
           {hasUnsavedChanges && (
             <div className="p-3 bg-orange-50 border border-orange-200 rounded-md">
-              <p className="text-sm text-orange-800">
-                You have unsaved changes
-              </p>
+              <p className="text-sm text-orange-800">You have unsaved changes</p>
             </div>
           )}
         </div>
       </div>
 
+      {/* Keyboard shortcuts legend */}
       <div className="border-t pt-3 lg:pt-4 text-xs text-muted-foreground mt-4">
         <div className="flex gap-3 lg:gap-6 flex-wrap">
-          <span>• Space: Play/Pause</span>
-          <span>• ←/→: Seek 1s</span>
-          <span>• L: Toggle loop</span>
-          <span>• C: Clear selection</span>
-          <span className="hidden lg:inline">
-            • Click & drag: Select loop region
-          </span>
+          <span>Space: Play/Pause</span>
+          <span>←/→: Seek 1s</span>
+          <span>L: Toggle loop</span>
+          <span>C: Clear region</span>
+          <span className="hidden lg:inline">Click & drag: Select loop</span>
+          <span className="hidden lg:inline">Click: Seek</span>
         </div>
       </div>
     </div>

@@ -45,6 +45,6 @@ export const transscribeKrioAi = async (file: any) => {
     modelId: "scribe_v1",
     file: audioFile!,
   });
-  console.log(transcribe);
+
   return transcribe.text || "";
 };
