@@ -9,6 +9,7 @@ import { getUserById } from "./user";
 export interface DashboardStats {
   totalFiles: number;
   completedFiles: number;
+  verifiedFiles: number;
   incompleteFiles: number;
   completionRate: number;
   totalGroups: number;
@@ -16,6 +17,13 @@ export interface DashboardStats {
   unassignedGroups: number;
   totalDurationSeconds: number;
   transcribedDurationSeconds: number;
+  statusBreakdown: {
+    pending: number;
+    krio_done: number;
+    english_done: number;
+    completed: number;
+    verified: number;
+  };
   recentActivity: {
     date: string;
     completed: number;
@@ -25,27 +33,50 @@ export interface DashboardStats {
     name: string;
     total: number;
     completed: number;
+    verified: number;
     assigned: string | null;
   }[];
   dailyProgress: {
     date: string;
     count: number;
   }[];
+  annotatorStats: {
+    name: string;
+    userId: string;
+    groupsAssigned: number;
+    filesCompleted: number;
+    filesTotal: number;
+  }[];
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   await connectDB();
 
-  // Get all audio files with their groups
   const audioFiles = await AudioFile.find().lean();
   const groups = await AudioGroup.find().lean();
 
-  // Calculate basic stats
+  // Basic stats — use the status field instead of checking transcript content
   const totalFiles = audioFiles.length;
-  const completedFiles = audioFiles.filter(
-    (file) =>
-      file.annotations?.transcriptKrio && file.annotations?.transcriptEnglish
-  ).length;
+
+  const statusBreakdown = {
+    pending: 0,
+    krio_done: 0,
+    english_done: 0,
+    completed: 0,
+    verified: 0,
+  };
+
+  audioFiles.forEach((file) => {
+    const status = file.annotations?.status || "pending";
+    if (status in statusBreakdown) {
+      statusBreakdown[status as keyof typeof statusBreakdown]++;
+    } else {
+      statusBreakdown.pending++;
+    }
+  });
+
+  const completedFiles = statusBreakdown.completed + statusBreakdown.verified;
+  const verifiedFiles = statusBreakdown.verified;
   const incompleteFiles = totalFiles - completedFiles;
   const completionRate =
     totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 0;
@@ -83,9 +114,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     const dateStr = new Date(file.updatedAt).toISOString().split("T")[0];
     const stats = activityByDate.get(dateStr);
     if (stats) {
-      const isCompleted =
-        file.annotations?.transcriptKrio && file.annotations?.transcriptEnglish;
-      if (isCompleted) {
+      const s = file.annotations?.status || "pending";
+      if (s === "completed" || s === "verified") {
         stats.completed++;
       } else {
         stats.incomplete++;
@@ -100,46 +130,40 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     })
   );
 
-  // Group stats
-  const groupStatsMap = new Map<
-    string,
-    { name: string; total: number; completed: number; assigned: string | null }
-  >();
-
+  // Group stats with resolved assigned user
   const groupsWithFiles = await Promise.all(
     groups.map(async (group) => {
       const user = group.assigned ? await getUserById(group.assigned) : null;
-      const audioFiles = await AudioFile.find({ groupId: group._id }).lean();
+      const gFiles = await AudioFile.find({ groupId: group._id }).lean();
       return {
         ...group,
         assigned: user?.user || null,
-        audioFiles,
+        audioFiles: gFiles,
       };
     })
   );
 
-  // Build group stats using groupsWithFiles which already contains
-  // the resolved assigned user name and the group's audioFiles.
-  // Use string keys for consistency with file.groupId which may be an ObjectId.
-  groupsWithFiles.forEach((group: any) => {
-    const key = String(group?._id);
-    const files = Array.isArray(group.audioFiles) ? group.audioFiles : [];
-    const completed = files.filter(
-      (f: any) =>
-        f.annotations?.transcriptKrio && f.annotations?.transcriptEnglish
-    ).length;
-
-    groupStatsMap.set(key, {
-      name: group.name,
-      total: files.length,
-      completed,
-      assigned: group.assigned?.firstName ?? null,
-    });
-  });
-
-  const groupStats = Array.from(groupStatsMap.values())
+  const groupStats = groupsWithFiles
+    .map((group: any) => {
+      const files = Array.isArray(group.audioFiles) ? group.audioFiles : [];
+      const completed = files.filter(
+        (f: any) =>
+          f.annotations?.status === "completed" ||
+          f.annotations?.status === "verified"
+      ).length;
+      const verified = files.filter(
+        (f: any) => f.annotations?.status === "verified"
+      ).length;
+      return {
+        name: group.name,
+        total: files.length,
+        completed,
+        verified,
+        assigned: group.assigned?.firstName ?? null,
+      };
+    })
     .sort((a, b) => b.total - a.total)
-    .slice(0, 5);
+    .slice(0, 10);
 
   // Daily progress (last 30 days)
   const thirtyDaysAgo = new Date();
@@ -171,9 +195,56 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     })
   );
 
+  // Annotator productivity stats
+  const annotatorMap = new Map<
+    string,
+    {
+      name: string;
+      userId: string;
+      groupsAssigned: number;
+      filesCompleted: number;
+      filesTotal: number;
+    }
+  >();
+
+  for (const g of groupsWithFiles) {
+    const gAny = g as any;
+    if (!gAny.assigned) continue;
+
+    const userId = gAny.assigned.id || String(gAny._id);
+    const name =
+      `${gAny.assigned.firstName || ""} ${gAny.assigned.lastName || ""}`.trim() ||
+      "Unknown";
+    const files = Array.isArray(gAny.audioFiles) ? gAny.audioFiles : [];
+    const done = files.filter(
+      (f: any) =>
+        f.annotations?.status === "completed" ||
+        f.annotations?.status === "verified"
+    ).length;
+
+    if (!annotatorMap.has(userId)) {
+      annotatorMap.set(userId, {
+        name,
+        userId,
+        groupsAssigned: 0,
+        filesCompleted: 0,
+        filesTotal: 0,
+      });
+    }
+    const entry = annotatorMap.get(userId)!;
+    entry.groupsAssigned++;
+    entry.filesCompleted += done;
+    entry.filesTotal += files.length;
+  }
+
+  const annotatorStats = Array.from(annotatorMap.values()).sort(
+    (a, b) => b.filesCompleted - a.filesCompleted
+  );
+
   return {
     totalFiles,
     completedFiles,
+    verifiedFiles,
     incompleteFiles,
     completionRate,
     totalGroups,
@@ -181,8 +252,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     unassignedGroups,
     totalDurationSeconds,
     transcribedDurationSeconds,
+    statusBreakdown,
     recentActivity,
     groupStats,
     dailyProgress,
+    annotatorStats,
   };
 }

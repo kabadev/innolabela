@@ -1,15 +1,13 @@
 "use server";
-import fetch from "node-fetch";
-import fs from "fs";
-import path from "path";
-
 import https from "https";
 import Groq from "groq-sdk";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
+
+
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const client = new ElevenLabsClient({
-  apiKey: "9e0191a269770b5979ef48db07dd4d7156856174f33ed4f9759603186c483077",
+  apiKey: process.env.ELEVENLABS_API_KEY!,
   environment: "https://api.elevenlabs.io",
 });
 

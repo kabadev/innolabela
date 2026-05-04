@@ -12,7 +12,14 @@ import type {
 } from "./audio-annotation-system";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Music, Trash2, Upload, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Music, Trash2, Upload, CheckCircle2, ArrowLeft, Download, Wand2, FileJson, FileText, FileCode, Search } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { SimpleAudioPlayer } from "./simple-audio-player";
 import {
   addAudioToGroup,
@@ -20,10 +27,12 @@ import {
   getGroup,
   updateAudioAnnotations,
 } from "@/app/actions";
+import { translateAi, transscribeKrioAi } from "@/app/transcribe";
 import { Uploader } from "./uploader";
 import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
 import { useUser } from "@clerk/nextjs";
 import { hasPermission, UserRole } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface GroupDetailClientProps {
   initialGroup: AudioGroup;
@@ -42,6 +51,8 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
   const [selectedAudio, setSelectedAudio] =
     useState<AudioFileWithSegments | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
 
   // Read selected audio from URL on mount and when URL changes
@@ -85,10 +96,29 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
     return group.audioFiles.filter(
       (file) =>
         file.annotations &&
-        (file.annotations.transcriptEnglish ||
-          file.annotations.transcriptKrio ||
-          file.annotations.category)
+        (file.annotations.status === "completed" ||
+          file.annotations.status === "verified")
     ).length;
+  };
+
+  const getStatusColor = (status?: string) => {
+    switch (status) {
+      case "krio_done": return "bg-blue-400";
+      case "english_done": return "bg-indigo-400";
+      case "completed": return "bg-green-500";
+      case "verified": return "bg-purple-500";
+      default: return "bg-slate-300";
+    }
+  };
+
+  const getStatusLabel = (status?: string) => {
+    switch (status) {
+      case "krio_done": return "Krio";
+      case "english_done": return "English";
+      case "completed": return "Done";
+      case "verified": return "Verified";
+      default: return "Pending";
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -147,6 +177,8 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             transcriptEnglish: "",
             transcriptKrio: "",
             category: "",
+            status: "pending",
+            speakerTags: [],
           },
         };
 
@@ -222,8 +254,103 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
   };
 
   const isAnnotated = (file: AudioFileWithSegments) => {
-    return file.annotations && file.annotations.transcriptKrio;
+    return file.annotations && (file.annotations.status === "completed" || file.annotations.status === "verified");
   };
+
+  // ─── Export Helpers ───────────────────────────────────────────────────────
+  const exportToJSON = () => {
+    const data = group.audioFiles.map(f => ({
+      name: f.name,
+      duration: f.duration,
+      annotations: f.annotations
+    }));
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${group.name}_annotations.json`;
+    link.click();
+  };
+
+  const exportToCSV = () => {
+    const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript"];
+    const rows = group.audioFiles.map(f => [
+      f.name,
+      f.duration,
+      f.annotations?.category || "",
+      f.annotations?.status || "",
+      `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
+      `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`
+    ]);
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${group.name}_annotations.csv`;
+    link.click();
+  };
+
+  const exportToSRT = () => {
+    // Basic SRT generation - for each file, we create one big segment for now
+    // In a real app, we'd use speaker tags or segments
+    let srtContent = "";
+    group.audioFiles.forEach((f, i) => {
+      if (f.annotations?.transcriptEnglish) {
+        srtContent += `${i + 1}\n`;
+        srtContent += `00:00:00,000 --> ${new Date(f.duration * 1000).toISOString().substr(11, 12).replace('.', ',')}\n`;
+        srtContent += `${f.annotations.transcriptEnglish}\n\n`;
+      }
+    });
+    const blob = new Blob([srtContent], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${group.name}_annotations.srt`;
+    link.click();
+  };
+
+  // ─── Batch AI Processing ──────────────────────────────────────────────────
+  const handleBatchTranscribe = async () => {
+    if (!confirm("This will transcribe all unannotated files in this group. Continue?")) return;
+    
+    setIsBatchProcessing(true);
+    try {
+      const unannotatedFiles = group.audioFiles.filter(f => !f.annotations?.transcriptKrio);
+      
+      for (const file of unannotatedFiles) {
+        const krio = await transscribeKrioAi(file.url);
+        const english = await translateAi(krio);
+        
+        const newAnnotations: AudioAnnotations = {
+          ...file.annotations!,
+          transcriptKrio: krio,
+          transcriptEnglish: english,
+          status: "completed"
+        };
+        
+        await updateAudioAnnotations(group.id, file.id, newAnnotations);
+      }
+      
+      // Refresh group data
+      const updatedGroup = await getGroup(group.id);
+      if (updatedGroup) setGroup(updatedGroup);
+      
+      router.refresh();
+      toast.success(`Batch transcription complete for ${unannotatedFiles.length} files.`);
+    } catch (err) {
+      console.error("Batch transcription error:", err);
+      toast.error("An error occurred during batch transcription.");
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const filteredAudioFiles = group.audioFiles.filter(f => 
+    f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    f.annotations?.transcriptKrio?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    f.annotations?.transcriptEnglish?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className=" flex flex-col lg:flex-row">
@@ -249,36 +376,78 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             </Button>
             <h3 className="font-semibold">Audio Files</h3>
           </div>
-          {user &&
-          hasPermission(user?.publicMetadata?.role as UserRole, [
-            "Admin",
-            // "Supervisor",
-            "Project Lead",
-            // "Technical Lead",
-          ]) ? (
-            <div className="flex items-center justify-between mb-2">
+
+          <div className="mb-4">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search files..."
+                className="pl-9 h-9 text-xs"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="flex-1 text-xs">
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={exportToJSON}>
+                    <FileJson className="w-4 h-4 mr-2" /> JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportToCSV}>
+                    <FileText className="w-4 h-4 mr-2" /> CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportToSRT}>
+                    <FileCode className="w-4 h-4 mr-2" /> SRT (Subtitles)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="flex-1 text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                onClick={handleBatchTranscribe}
+                disabled={isBatchProcessing}
+              >
+                <Wand2 className={`w-3.5 h-3.5 mr-1.5 ${isBatchProcessing ? 'animate-spin' : ''}`} />
+                {isBatchProcessing ? "Processing..." : "AI All"}
+              </Button>
+            </div>
+
+            {user &&
+            hasPermission(user?.publicMetadata?.role as UserRole, [
+              "Admin",
+              "Project Lead",
+            ]) && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => setShowUploadModal(true)}
                 disabled={group.audioFiles.length >= 100}
-                className="flex-1"
+                className="w-full text-xs"
               >
                 <Upload className="w-3 h-3 mr-1" />
                 Add Files
               </Button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between p-6"></div>
-          )}
+            )}
+          </div>
 
-          <p className="text-xs text-muted-foreground">
-            {group.audioFiles.length} / 100 files • {getAnnotatedCount()}{" "}
-            annotated
-          </p>
-          <div className="w-full bg-muted rounded-full h-1.5 mt-2">
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+            <span>{group.audioFiles.length} / 100 files</span>
+            <span>{getAnnotatedCount()} annotated</span>
+          </div>
+          <div className="w-full bg-muted rounded-full h-1 mt-1">
             <div
-              className="bg-primary rounded-full h-1.5 transition-all"
+              className="bg-primary rounded-full h-1 transition-all"
               style={{ width: `${(group.audioFiles.length / 100) * 100}%` }}
             />
           </div>
@@ -308,8 +477,8 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
               </div>
             </div>
           ) : (
-            <div className="p-2 space-y-1 h-[calc(100vh-220px)] overflow-y-auto">
-              {group.audioFiles.map((file) => (
+            <div className="p-2 space-y-1 h-[calc(100vh-320px)] overflow-y-auto">
+              {filteredAudioFiles.map((file) => (
                 <div
                   key={file.id}
                   className={`p-3 rounded-lg cursor-pointer transition-all group hover:bg-background ${
@@ -325,15 +494,13 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
                       <p className="text-sm font-medium truncate">
                         {file.annotations?.transcriptKrio || file.name}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDuration(file.duration)}
-                      </p>
-                      {isAnnotated(file) && (
-                        <div className="flex items-center gap-1 text-xs text-green-600 mt-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Annotated
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-xs text-muted-foreground">
+                          {formatDuration(file.duration)}
+                        </p>
+                        <span className={`inline-block w-2 h-2 rounded-full ${getStatusColor(file.annotations?.status)}`} title={getStatusLabel(file.annotations?.status)} />
+                        <span className="text-[10px] text-muted-foreground">{getStatusLabel(file.annotations?.status)}</span>
+                      </div>
                     </div>
 
                     {user &&
@@ -376,6 +543,16 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             audioFile={selectedAudio}
             onSave={handleSaveAnnotations}
             onClose={handleClosePlayer}
+            onNext={() => {
+              const idx = group.audioFiles.findIndex(f => f.id === selectedAudio.id);
+              if (idx < group.audioFiles.length - 1) handleAudioClick(group.audioFiles[idx + 1]);
+            }}
+            onPrev={() => {
+              const idx = group.audioFiles.findIndex(f => f.id === selectedAudio.id);
+              if (idx > 0) handleAudioClick(group.audioFiles[idx - 1]);
+            }}
+            hasNext={group.audioFiles.findIndex(f => f.id === selectedAudio.id) < group.audioFiles.length - 1}
+            hasPrev={group.audioFiles.findIndex(f => f.id === selectedAudio.id) > 0}
           />
         ) : (
           <div className="h-[calc(100vh-65px)] w-full  flex items-center justify-center text-muted-foreground">

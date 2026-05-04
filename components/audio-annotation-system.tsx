@@ -16,6 +16,8 @@ export interface AudioAnnotations {
   transcriptEnglish: string;
   transcriptKrio: string;
   category: string;
+  status: "pending" | "krio_done" | "english_done" | "completed" | "verified";
+  speakerTags?: { time: number; label: string }[];
 }
 
 export interface AudioFileWithSegments extends AudioFile {
@@ -52,6 +54,8 @@ export function AudioAnnotationSystem() {
           transcriptEnglish: "",
           transcriptKrio: "",
           category: "",
+          status: "pending",
+          speakerTags: [],
         },
       }));
 
@@ -73,6 +77,8 @@ export function AudioAnnotationSystem() {
           transcriptEnglish: "",
           transcriptKrio: "",
           category: "",
+          status: "pending",
+          speakerTags: [],
         },
       }));
 

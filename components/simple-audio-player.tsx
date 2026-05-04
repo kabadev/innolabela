@@ -22,9 +22,21 @@ import {
   Sparkles,
   ArrowLeft,
   X,
+  Volume2,
+  VolumeX,
+  Gauge,
+  CheckCircle,
+  Clock,
+  MessageSquare,
+  UserPlus,
 } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import type { AudioFileWithSegments } from "./audio-annotation-system";
 import { translateAi, transscribeKrioAi } from "@/app/transcribe";
+import { useUser } from "@clerk/nextjs";
+import { hasPermission, UserRole } from "@/lib/utils";
 
 interface SimpleAudioPlayerProps {
   audioFile: AudioFileWithSegments;
@@ -32,15 +44,28 @@ interface SimpleAudioPlayerProps {
     transcriptEnglish: string;
     transcriptKrio: string;
     category: string;
+    status: "pending" | "krio_done" | "english_done" | "completed" | "verified";
+    speakerTags: { time: number; label: string }[];
   }) => void;
   onClose?: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
+  hasNext?: boolean;
+  hasPrev?: boolean;
 }
 
 export function SimpleAudioPlayer({
   audioFile,
   onSave,
   onClose,
+  onNext,
+  onPrev,
+  hasNext = false,
+  hasPrev = false,
 }: SimpleAudioPlayerProps) {
+  const { user } = useUser();
+  const isAdmin = user && hasPermission(user.publicMetadata?.role as UserRole, ["Admin", "Project Lead"]);
+
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -54,7 +79,13 @@ export function SimpleAudioPlayer({
   const [transcriptEnglish, setTranscriptEnglish] = useState("");
   const [transcriptKrio, setTranscriptKrio] = useState("");
   const [category, setCategory] = useState("");
+  const [status, setStatus] = useState<"pending" | "krio_done" | "english_done" | "completed" | "verified">("pending");
+  const [speakerTags, setSpeakerTags] = useState<{ time: number; label: string }[]>([]);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<Date | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLCanvasElement>(null);
@@ -75,6 +106,8 @@ export function SimpleAudioPlayer({
     setTranscriptEnglish(audioFile?.annotations?.transcriptEnglish ?? "");
     setTranscriptKrio(audioFile?.annotations?.transcriptKrio ?? "");
     setCategory(audioFile?.annotations?.category ?? "");
+    setStatus((audioFile?.annotations?.status as typeof status) ?? "pending");
+    setSpeakerTags(audioFile?.annotations?.speakerTags ?? []);
 
     const generateWaveform = async () => {
       try {
@@ -121,6 +154,11 @@ export function SimpleAudioPlayer({
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
 
+    // Detect dark mode for adaptive colors
+    const isDark = document.documentElement.classList.contains("dark");
+    const playedColor  = isDark ? "#a5b4fc" : "#818cf8";  // brighter in dark
+    const unplayedColor = isDark ? "#4b5563" : "#334155";  // subtle shift
+
     // Base waveform bars
     const barWidth = width / waveformData.length;
     const centerY = height / 2;
@@ -132,7 +170,7 @@ export function SimpleAudioPlayer({
       const fraction = i / waveformData.length;
 
       // Colour bars: played = bright, upcoming = dim
-      ctx.fillStyle = fraction < progressFraction ? "#818cf8" : "#334155";
+      ctx.fillStyle = fraction < progressFraction ? playedColor : unplayedColor;
       ctx.fillRect(x, centerY - barHeight / 2, Math.max(barWidth - 1, 0.5), barHeight);
     });
 
@@ -162,6 +200,20 @@ export function SimpleAudioPlayer({
     // Playhead
     if (duration > 0) {
       const playheadX = progressFraction * width;
+      
+      // Draw speaker tags on waveform
+      speakerTags.forEach(tag => {
+        const tagX = (tag.time / duration) * width;
+        ctx.fillStyle = "#fbbf24";
+        ctx.beginPath();
+        ctx.moveTo(tagX, 0);
+        ctx.lineTo(tagX, height);
+        ctx.stroke();
+        
+        ctx.font = "9px sans-serif";
+        ctx.fillText(tag.label, tagX + 2, height - 10);
+      });
+
       ctx.strokeStyle = "#f87171";
       ctx.lineWidth = 2;
       ctx.setLineDash([]);
@@ -213,20 +265,27 @@ export function SimpleAudioPlayer({
       }
     };
 
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("play",  () => setIsPlaying(true));
-    audio.addEventListener("pause", () => setIsPlaying(false));
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
+
+    // Initial audio properties
+    audio.playbackRate = playbackRate;
+    audio.volume = isMuted ? 0 : volume;
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("play",  () => setIsPlaying(true));
-      audio.removeEventListener("pause", () => setIsPlaying(false));
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [audioFile]);
+  }, [audioFile, playbackRate, volume, isMuted]);
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
   const togglePlayPause = useCallback(() => {
@@ -325,12 +384,28 @@ export function SimpleAudioPlayer({
     setIsLooping(false);
   };
 
+
+    // ─── Annotations ───────────────────────────────────────────────────────────
+  const handleSave = useCallback(() => {
+    onSave?.({ transcriptEnglish, transcriptKrio, category, status, speakerTags });
+    setHasUnsavedChanges(false);
+    setLastSavedTime(new Date());
+  }, [onSave, transcriptEnglish, transcriptKrio, category, status, speakerTags]);
+
+  
   // ─── Keyboard shortcuts — use refs so handlers never go stale ─────────────
   const isPlayingRef = useRef(isPlaying);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+S / Cmd+S: Save from anywhere (even while typing)
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSave();
+        return;
+      }
+
       const active = document.activeElement;
       const isTyping =
         active &&
@@ -347,11 +422,11 @@ export function SimpleAudioPlayer({
           break;
         case "ArrowLeft":
           e.preventDefault();
-          seekRelative(-1);
+          e.shiftKey ? seekRelative(-5) : seekRelative(-1);
           break;
         case "ArrowRight":
           e.preventDefault();
-          seekRelative(1);
+          e.shiftKey ? seekRelative(5) : seekRelative(1);
           break;
         case "l":
         case "L":
@@ -363,6 +438,14 @@ export function SimpleAudioPlayer({
           e.preventDefault();
           clearLoop();
           break;
+        case "n":
+        case "N":
+          if (hasNext) onNext?.();
+          break;
+        case "p":
+        case "P":
+          if (hasPrev) onPrev?.();
+          break;
         case "Escape":
           if (window.innerWidth < 1024) onClose?.();
           break;
@@ -371,15 +454,19 @@ export function SimpleAudioPlayer({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-    // togglePlayPause & seekRelative are stable useCallback refs; toggleLoop/clearLoop
-    // are inline but only use setState so this is fine with the exhaustive list below.
-  }, [togglePlayPause, seekRelative, loopStart, loopEnd, isLooping, onClose]);
+  }, [togglePlayPause, seekRelative, handleSave, loopStart, loopEnd, isLooping, onClose, onNext, onPrev, hasNext, hasPrev]);
 
-  // ─── Annotations ───────────────────────────────────────────────────────────
-  const handleSave = () => {
-    onSave?.({ transcriptEnglish, transcriptKrio, category });
-    setHasUnsavedChanges(false);
-  };
+
+  // Auto-save logic (debounced 30s)
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+
+    const timer = setTimeout(() => {
+      handleSave();
+    }, 30000);
+
+    return () => clearTimeout(timer);
+  }, [hasUnsavedChanges, handleSave]);
 
   const handleTranslate = async () => {
     try {
@@ -403,6 +490,19 @@ export function SimpleAudioPlayer({
     }
   };
 
+  const [customSpeakerLabel, setCustomSpeakerLabel] = useState("");
+
+  const addSpeakerTag = (label: string) => {
+    if (!label.trim()) return;
+    setSpeakerTags(prev => [...prev, { time: currentTime, label: label.trim() }].sort((a, b) => a.time - b.time));
+    setHasUnsavedChanges(true);
+  };
+
+  const removeSpeakerTag = (index: number) => {
+    setSpeakerTags(prev => prev.filter((_, i) => i !== index));
+    setHasUnsavedChanges(true);
+  };
+
   const formatTime = (time: number) => {
     const m  = Math.floor(time / 60);
     const s  = Math.floor(time % 60);
@@ -420,12 +520,26 @@ export function SimpleAudioPlayer({
     <div className="h-[calc(100vh-65px)] flex flex-col p-4 lg:p-6">
       <audio ref={audioRef} src={audioFile.url} preload="metadata" />
 
-      {/* Mobile back button */}
-      <div className="mb-4 lg:hidden">
-        <Button variant="ghost" size="sm" onClick={onClose} className="flex items-center gap-2 -ml-2">
-          <ArrowLeft className="w-4 h-4" />
-          Back to List
-        </Button>
+      {/* Mobile back button + Nav */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="lg:hidden">
+          <Button variant="ghost" size="sm" onClick={onClose} className="flex items-center gap-2 -ml-2">
+            <ArrowLeft className="w-4 h-4" />
+            Back to List
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 ml-auto">
+          {hasPrev && (
+            <Button variant="outline" size="sm" onClick={onPrev} title="Previous file (P)">
+              <SkipBack className="w-3.5 h-3.5 mr-1" /> Prev
+            </Button>
+          )}
+          {hasNext && (
+            <Button variant="outline" size="sm" onClick={onNext} title="Next file (N)">
+              Next <SkipForward className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 lg:mb-6">
@@ -490,6 +604,43 @@ export function SimpleAudioPlayer({
               <SkipForward className="w-4 h-4" />
             </Button>
 
+            {/* Playback Speed */}
+            <div className="flex items-center gap-1.5 ml-1">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              <Select value={playbackRate.toString()} onValueChange={(v) => setPlaybackRate(parseFloat(v))}>
+                <SelectTrigger className="h-8 w-[70px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                    <SelectItem key={rate} value={rate.toString()}>{rate}x</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Volume Control */}
+            <div className="flex items-center gap-2 ml-2 min-w-[100px] group">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => setIsMuted(!isMuted)}
+              >
+                {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </Button>
+              <Slider
+                value={[isMuted ? 0 : volume * 100]}
+                max={100}
+                step={1}
+                onValueChange={([v]) => {
+                  setVolume(v / 100);
+                  if (v > 0) setIsMuted(false);
+                }}
+                className="w-20"
+              />
+            </div>
+
             {loopStart !== null && loopEnd !== null && (
               <>
                 <Button
@@ -547,30 +698,85 @@ export function SimpleAudioPlayer({
         {/* ── Annotations ── */}
         <div className="space-y-4 lg:space-y-5">
           <div className="flex items-center justify-between">
-            <h3 className="text-base lg:text-lg font-semibold">Annotations</h3>
-            <Button
-              onClick={handleSave}
-              size="sm"
-              className={hasUnsavedChanges ? "bg-orange-600 hover:bg-orange-700" : ""}
-            >
-              <Save className="w-4 h-4 mr-2" />
-              {hasUnsavedChanges ? "Save Changes" : "Save"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base lg:text-lg font-semibold">Annotations</h3>
+              {lastSavedTime && !hasUnsavedChanges && (
+                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  Saved {lastSavedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleSave}
+                size="sm"
+                className={hasUnsavedChanges ? "bg-orange-600 hover:bg-orange-700" : ""}
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {hasUnsavedChanges ? "Save Changes" : "Save"}
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-4">
-            <div>
-              <Label htmlFor="category">Category</Label>
-              <Select value={category} onValueChange={(v) => { setCategory(v); setHasUnsavedChanges(true); }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {["conversation","monologue","interview","story","news","music","other"].map((v) => (
-                    <SelectItem key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="status" className="flex items-center gap-1.5 mb-1.5">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Status
+                </Label>
+                <Select value={status} onValueChange={(v) => { setStatus(v as typeof status); setHasUnsavedChanges(true); }}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-slate-400" /> Pending
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="krio_done">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-blue-400" /> Krio Done
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="english_done">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-indigo-400" /> English Done
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="completed">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-green-500" /> Completed
+                      </div>
+                    </SelectItem>
+                    {isAdmin && (
+                      <SelectItem value="verified">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-purple-500" /> Verified
+                        </div>
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="category" className="flex items-center gap-1.5 mb-1.5">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Category
+                </Label>
+                <Select value={category} onValueChange={(v) => { setCategory(v); setHasUnsavedChanges(true); }}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["conversation","monologue","interview","story","news","music","other"].map((v) => (
+                      <SelectItem key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div>
@@ -608,6 +814,74 @@ export function SimpleAudioPlayer({
             </div>
           </div>
 
+          <div className="space-y-3 pt-4 border-t">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-1.5">
+                <UserPlus className="w-3.5 h-3.5" />
+                Speaker Tags
+              </Label>
+              <div className="flex gap-1 flex-wrap">
+                {["Speaker A", "Speaker B", "Interviewer"].map(label => (
+                  <Button 
+                    key={label} 
+                    variant="outline" 
+                    size="xs" 
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => addSpeakerTag(label)}
+                  >
+                    + {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom speaker label input */}
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Custom label..."
+                className="h-7 text-xs flex-1"
+                value={customSpeakerLabel}
+                onChange={(e) => setCustomSpeakerLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && customSpeakerLabel.trim()) {
+                    addSpeakerTag(customSpeakerLabel);
+                    setCustomSpeakerLabel("");
+                  }
+                }}
+              />
+              <Button
+                variant="outline"
+                size="xs"
+                className="h-7 text-[10px]"
+                onClick={() => {
+                  if (customSpeakerLabel.trim()) {
+                    addSpeakerTag(customSpeakerLabel);
+                    setCustomSpeakerLabel("");
+                  }
+                }}
+              >
+                Add
+              </Button>
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              {speakerTags.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground italic">No speaker tags added. Position playhead and click a label above.</p>
+              ) : (
+                speakerTags.map((tag, i) => (
+                  <Badge key={i} variant="secondary" className="gap-1.5 px-2 py-0.5 text-[10px] cursor-pointer" onClick={() => {
+                    const audio = audioRef.current;
+                    if (audio) audio.currentTime = tag.time;
+                  }}>
+                    <span className="font-mono text-slate-500">{formatTime(tag.time)}</span>
+                    {tag.label}
+                    <X className="w-2.5 h-2.5 cursor-pointer hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeSpeakerTag(i); }} />
+                  </Badge>
+                ))
+              )}
+            </div>
+          </div>
+
           {hasUnsavedChanges && (
             <div className="p-3 bg-orange-50 border border-orange-200 rounded-md">
               <p className="text-sm text-orange-800">You have unsaved changes</p>
@@ -621,10 +895,12 @@ export function SimpleAudioPlayer({
         <div className="flex gap-3 lg:gap-6 flex-wrap">
           <span>Space: Play/Pause</span>
           <span>←/→: Seek 1s</span>
+          <span>Shift+←/→: Seek 5s</span>
           <span>L: Toggle loop</span>
           <span>C: Clear region</span>
-          <span className="hidden lg:inline">Click & drag: Select loop</span>
-          <span className="hidden lg:inline">Click: Seek</span>
+          <span>Ctrl+S: Save</span>
+          <span>N/P: Next/Prev file</span>
+          <span className="hidden lg:inline">Click & drag: Loop</span>
         </div>
       </div>
     </div>

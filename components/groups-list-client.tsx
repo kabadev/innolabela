@@ -6,7 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import type { AudioGroup, AudioFile } from "./audio-annotation-system";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FolderOpen, Music, Trash2, Plus } from "lucide-react";
+import { FolderOpen, Music, Trash2, Plus, Search, Download, Wand2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { assignUserToGroup, createGroup, deleteGroup } from "@/app/actions";
 import { Uploader } from "@/components/uploader";
 import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
@@ -30,6 +37,7 @@ export function GroupsListClient({
   const [assignLoading, setAssignLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState<string>("");
   const [isCreating, setIsCreating] = useState(false);
   const uploaderRef = useRef<{ reset: () => void }>(null);
@@ -122,6 +130,8 @@ export function GroupsListClient({
           transcriptEnglish: "",
           transcriptKrio: "",
           category: "",
+          status: "pending",
+          speakerTags: [],
         },
       }));
 
@@ -176,15 +186,32 @@ export function GroupsListClient({
       setAssignLoading(false);
     }
   };
+  const filteredGroups = groups.filter((g) =>
+    g.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <div className="h-full flex flex-col">
       <div className="p-2 md:p-4 border-b">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
             <h2 className="text-xl font-semibold">Audio Groups</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              {groups.length} {groups.length === 1 ? "group" : "groups"}
+              {filteredGroups.length} {filteredGroups.length === 1 ? "group" : "groups"}
             </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search groups..."
+                className="pl-9 h-10"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
           </div>
 
           {user &&
@@ -192,7 +219,6 @@ export function GroupsListClient({
               "Admin",
               "Project Lead",
               "Technical Lead",
-              // "Annotators"
             ]) && (
               <div className="flex items-center gap-2">
                 <Button
@@ -212,12 +238,12 @@ export function GroupsListClient({
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {groups.length === 0 ? (
+        {filteredGroups.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center text-muted-foreground">
               <FolderOpen className="w-16 h-16 mx-auto mb-4 opacity-50" />
               <h3 className="text-lg font-medium mb-2">
-                No audio groups available
+                {searchQuery ? "No matching groups found" : "No audio groups available"}
               </h3>
               <p className="text-sm mb-4">
                 {user &&
@@ -225,7 +251,6 @@ export function GroupsListClient({
                   "Admin",
                   "Project Lead",
                   "Technical Lead",
-                  // "Annotators"
                 ])
                   ? "Get started by creating your first audio group."
                   : "Please contact your administrator to assign audio groups to you."}
@@ -235,7 +260,6 @@ export function GroupsListClient({
                   "Admin",
                   "Project Lead",
                   "Technical Lead",
-                  // "Annotators"
                 ]) && (
                   <Button onClick={() => setShowModal(true)} className="gap-2">
                     <Plus className="w-4 h-4" />
@@ -246,7 +270,7 @@ export function GroupsListClient({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {groups.map((group) => (
+            {filteredGroups.map((group) => (
               <Card
                 key={group.id}
                 className="p-4 cursor-pointer transition-all hover:shadow-md hover:border-primary/50 group"

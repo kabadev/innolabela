@@ -6,6 +6,7 @@ import type { AudioAnnotations } from "@/components/audio-annotation-system";
 import { connectDB } from "@/lib/mongodb";
 import { getUserById } from "./actions/user";
 import { currentUser } from "@clerk/nextjs/server";
+import { createAuditLog } from "./actions/audit";
 
 export interface AudioFileData {
   id: string;
@@ -94,6 +95,8 @@ export async function createGroup(
         transcriptEnglish: "",
         transcriptKrio: "",
         category: "",
+        status: "pending",
+        speakerTags: [],
       },
     }))
   );
@@ -177,6 +180,8 @@ export async function addAudioToGroup(
       transcriptEnglish: "",
       transcriptKrio: "",
       category: "",
+      status: "pending",
+      speakerTags: [],
     },
   });
 
@@ -199,6 +204,10 @@ export async function updateAudioAnnotations(
 ): Promise<AudioFileData | null> {
   await connectDB();
 
+  // Get the old file for audit diff
+  const oldFile = await AudioFile.findById(audioId).lean();
+  const beforeAnnotations = oldFile?.annotations;
+
   const audioFile = await AudioFile.findByIdAndUpdate(
     audioId,
     { annotations },
@@ -206,6 +215,28 @@ export async function updateAudioAnnotations(
   );
 
   if (!audioFile) return null;
+
+  // Create audit log entry
+  try {
+    const user = await currentUser();
+    if (user) {
+      const statusChanged = beforeAnnotations?.status !== annotations.status;
+      await createAuditLog({
+        userId: user.id,
+        userName: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+        audioFileId: audioId,
+        groupId,
+        action: statusChanged ? "status_changed" : "annotation_saved",
+        details: statusChanged
+          ? `Status: ${beforeAnnotations?.status || "pending"} → ${annotations.status}`
+          : "Annotation updated",
+        before: beforeAnnotations,
+        after: annotations,
+      });
+    }
+  } catch (err) {
+    console.error("Audit log error:", err);
+  }
 
   return JSON.parse(
     JSON.stringify({

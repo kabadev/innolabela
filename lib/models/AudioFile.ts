@@ -4,6 +4,8 @@ export interface IAudioAnnotations {
   transcriptEnglish: string;
   transcriptKrio: string;
   category: string;
+  status: "pending" | "krio_done" | "english_done" | "completed" | "verified";
+  speakerTags?: { time: number; label: string }[];
 }
 
 export interface IAudioFile extends Document {
@@ -22,6 +24,17 @@ const AudioAnnotationsSchema = new Schema<IAudioAnnotations>(
     transcriptEnglish: { type: String, default: "" },
     transcriptKrio: { type: String, default: "" },
     category: { type: String, default: "" },
+    status: {
+      type: String,
+      enum: ["pending", "krio_done", "english_done", "completed", "verified"],
+      default: "pending",
+    },
+    speakerTags: [
+      {
+        time: { type: Number },
+        label: { type: String },
+      },
+    ],
   },
   { _id: false }
 );

@@ -12,6 +12,9 @@ import {
   X,
   Group,
   Users,
+  Search,
+  ShieldCheck,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
@@ -60,6 +63,24 @@ export function AdminSidebar() {
       name: "Users",
       href: "/controls/users",
       icon: Users,
+      allowedRoles: ["Admin"],
+    },
+    {
+      name: "Search",
+      href: "/controls/search",
+      icon: Search,
+      allowedRoles: ["Admin", "Supervisor", "Project Lead"],
+    },
+    {
+      name: "Review Queue",
+      href: "/controls/review",
+      icon: ShieldCheck,
+      allowedRoles: ["Admin", "Supervisor", "Project Lead"],
+    },
+    {
+      name: "Audit Logs",
+      href: "/controls/audit",
+      icon: History,
       allowedRoles: ["Admin"],
     },
   ];

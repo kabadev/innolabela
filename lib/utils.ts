@@ -19,10 +19,5 @@ export function hasPermission(
   userRole: UserRole,
   requiredRoles: UserRole[]
 ): boolean {
-  console.log(userRole);
-
   return requiredRoles.includes(userRole);
-  // return requiredRoles.some(
-  //   (role) => PermissionLevels[userRole] >= PermissionLevels[role]
-  // );
 }
