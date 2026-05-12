@@ -15,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   History,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
@@ -75,6 +76,12 @@ export function AdminSidebar() {
       name: "Review Queue",
       href: "/controls/review",
       icon: ShieldCheck,
+      allowedRoles: ["Admin", "Supervisor", "Project Lead"],
+    },
+    {
+      name: "Glossary",
+      href: "/controls/glossary",
+      icon: BookOpen,
       allowedRoles: ["Admin", "Supervisor", "Project Lead"],
     },
     {

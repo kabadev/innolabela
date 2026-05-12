@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,33 +25,63 @@ import {
   Volume2,
   VolumeX,
   Gauge,
-  CheckCircle,
+  CheckCircle2,
   Clock,
   MessageSquare,
   UserPlus,
+  ArrowRight,
+  Info,
+  Keyboard,
+  History,
+  Languages,
+  Music,
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { BookOpen, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { AudioFileWithSegments } from "./audio-annotation-system";
-import { translateAi, transscribeKrioAi } from "@/app/transcribe";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn, hasPermission, UserRole } from "@/lib/utils";
 import { useUser } from "@clerk/nextjs";
-import { hasPermission, UserRole } from "@/lib/utils";
+
+import { DEFAULT_GLOSSARY } from "@/lib/glossary-defaults";
+
+import type { AudioAnnotations, AudioFileWithSegments } from "./audio-annotation-system";
+import { translateAi, transscribeKrioAi } from "@/app/transcribe";
+import { Separator } from "./ui/separator";
+
 
 interface SimpleAudioPlayerProps {
   audioFile: AudioFileWithSegments;
-  onSave?: (annotations: {
-    transcriptEnglish: string;
-    transcriptKrio: string;
-    category: string;
-    status: "pending" | "krio_done" | "english_done" | "completed" | "verified";
-    speakerTags: { time: number; label: string }[];
-  }) => void;
-  onClose?: () => void;
+  onSave?: (annotations: AudioAnnotations) => void;
+  onClose: () => void;
   onNext?: () => void;
   onPrev?: () => void;
   hasNext?: boolean;
   hasPrev?: boolean;
+  initialGlossary?: any[];
 }
 
 export function SimpleAudioPlayer({
@@ -62,6 +92,7 @@ export function SimpleAudioPlayer({
   onPrev,
   hasNext = false,
   hasPrev = false,
+  initialGlossary = [],
 }: SimpleAudioPlayerProps) {
   const { user } = useUser();
   const isAdmin = user && hasPermission(user.publicMetadata?.role as UserRole, ["Admin", "Project Lead"]);
@@ -86,12 +117,20 @@ export function SimpleAudioPlayer({
   const [isMuted, setIsMuted] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [lastSavedTime, setLastSavedTime] = useState<Date | null>(null);
+  const [customSpeakerLabel, setCustomSpeakerLabel] = useState("");
+  const [cheatSheetSearch, setCheatSheetSearch] = useState("");
+  const glossary = useMemo(() => initialGlossary.length > 0 ? initialGlossary : DEFAULT_GLOSSARY, [initialGlossary]);
 
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const filteredCheatSheet = useMemo(() => {
+    return glossary.filter(item => 
+      item.krio.toLowerCase().includes(cheatSheetSearch.toLowerCase()) ||
+      item.meaning.toLowerCase().includes(cheatSheetSearch.toLowerCase()) ||
+      (item.variant && item.variant.toLowerCase().includes(cheatSheetSearch.toLowerCase()))
+    );
+  }, [glossary, cheatSheetSearch]);
+
   const waveformRef = useRef<HTMLCanvasElement>(null);
-
-  // Use refs for loop values so the timeupdate handler always has fresh data
-  // without needing to be re-registered on every state change.
+  const audioRef = useRef<HTMLAudioElement>(null);
   const loopStartRef = useRef<number | null>(null);
   const loopEndRef = useRef<number | null>(null);
   const isLoopingRef = useRef(false);
@@ -100,27 +139,42 @@ export function SimpleAudioPlayer({
   useEffect(() => { loopEndRef.current = loopEnd; }, [loopEnd]);
   useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
 
-  // ─── Waveform generation ───────────────────────────────────────────────────
+  // Reset and load file data
   useEffect(() => {
-    if (!audioFile?.url) return;
+    if (!audioFile) return;
     setTranscriptEnglish(audioFile?.annotations?.transcriptEnglish ?? "");
     setTranscriptKrio(audioFile?.annotations?.transcriptKrio ?? "");
     setCategory(audioFile?.annotations?.category ?? "");
     setStatus((audioFile?.annotations?.status as typeof status) ?? "pending");
     setSpeakerTags(audioFile?.annotations?.speakerTags ?? []);
+    setHasUnsavedChanges(false);
+    setLastSavedTime(null);
+    clearLoop();
 
     const generateWaveform = async () => {
       try {
-        const response = await fetch(
-          `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`
-        );
+        const proxyUrl = `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`;
+        const response = await fetch(proxyUrl);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio through proxy: ${response.status} ${response.statusText}`);
+        }
+
         const arrayBuffer = await response.arrayBuffer();
-        const AudioContextClass =
-          window.AudioContext || (window as any).webkitAudioContext;
+        if (arrayBuffer.byteLength === 0) {
+          throw new Error("Received empty array buffer");
+        }
+
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const audioContext = new AudioContextClass();
+        
         const audioBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
-          audioContext.decodeAudioData(arrayBuffer, resolve, reject);
+          audioContext.decodeAudioData(arrayBuffer, resolve, (err) => {
+            console.error("[Waveform] decodeAudioData error:", err);
+            reject(new Error("Unable to decode audio data"));
+          });
         });
+
         const channelData = audioBuffer.getChannelData(0);
         const samples = 800;
         const blockSize = Math.floor(channelData.length / samples);
@@ -133,16 +187,19 @@ export function SimpleAudioPlayer({
           waveform.push(sum / blockSize);
         }
         setWaveformData(waveform);
+        // Close context to free resources
+        await audioContext.close();
       } catch (err) {
-        console.error("[Waveform] Error:", err);
-        setWaveformData(Array.from({ length: 800 }, () => Math.random() * 0.5));
+        console.error("[Waveform] Generation failed:", err);
+        // Fallback to dummy data so UI doesn't stay in "Rendering..." state forever
+        setWaveformData(Array.from({ length: 800 }, () => 0.1 + Math.random() * 0.2));
       }
     };
 
     if (typeof window !== "undefined") generateWaveform();
   }, [audioFile?.url]);
 
-  // ─── Draw waveform ─────────────────────────────────────────────────────────
+  // Draw waveform
   useEffect(() => {
     const canvas = waveformRef.current;
     if (!canvas || waveformData.length === 0) return;
@@ -150,101 +207,122 @@ export function SimpleAudioPlayer({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Always draw at the canvas's internal resolution (800×200).
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
 
-    // Detect dark mode for adaptive colors
     const isDark = document.documentElement.classList.contains("dark");
-    const playedColor  = isDark ? "#a5b4fc" : "#818cf8";  // brighter in dark
-    const unplayedColor = isDark ? "#4b5563" : "#334155";  // subtle shift
-
-    // Base waveform bars
+    const playedColor = isDark ? "#818cf8" : "#4f46e5";
+    const unplayedColor = isDark ? "#334155" : "#e2e8f0";
+    
     const barWidth = width / waveformData.length;
     const centerY = height / 2;
     const progressFraction = duration > 0 ? currentTime / duration : 0;
 
     waveformData.forEach((amplitude, i) => {
-      const barHeight = Math.max(2, amplitude * height * 0.85);
+      const barHeight = Math.max(3, amplitude * height * 0.9);
       const x = i * barWidth;
       const fraction = i / waveformData.length;
 
-      // Colour bars: played = bright, upcoming = dim
       ctx.fillStyle = fraction < progressFraction ? playedColor : unplayedColor;
-      ctx.fillRect(x, centerY - barHeight / 2, Math.max(barWidth - 1, 0.5), barHeight);
+      
+      // Rounded rect implementation for bars
+      const radius = 1.5;
+      const bx = x + 0.5;
+      const by = centerY - barHeight / 2;
+      const bw = Math.max(barWidth - 1, 1);
+      const bh = barHeight;
+      
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, radius);
+      ctx.fill();
     });
+
+    // Timeline Ruler (inside waveform)
+    if (duration > 0) {
+      ctx.fillStyle = isDark ? "rgba(148, 163, 184, 0.5)" : "rgba(100, 116, 139, 0.5)";
+      ctx.font = "9px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      
+      let interval = 5;
+      if (duration > 60) interval = 10;
+      if (duration > 300) interval = 30;
+      if (duration > 600) interval = 60;
+      
+      const tickCount = Math.floor(duration / interval);
+      for (let i = 0; i <= tickCount; i++) {
+        const time = i * interval;
+        const x = (time / duration) * width;
+        
+        // Tick at the bottom
+        ctx.fillRect(x - 0.5, height - 12, 1, 4);
+        
+        // Label
+        if (i % (duration > 300 ? 2 : 1) === 0) {
+          ctx.fillText(formatTime(time), x, height - 3);
+        }
+      }
+    }
 
     // Loop region highlight
     if (loopStart !== null && loopEnd !== null && duration > 0) {
       const startX = (Math.min(loopStart, loopEnd) / duration) * width;
-      const endX   = (Math.max(loopStart, loopEnd) / duration) * width;
+      const endX = (Math.max(loopStart, loopEnd) / duration) * width;
 
-      ctx.fillStyle = "rgba(52, 211, 153, 0.18)";
+      ctx.fillStyle = "rgba(79, 70, 229, 0.15)";
       ctx.fillRect(startX, 0, endX - startX, height);
 
-      ctx.strokeStyle = "#34d399";
+      ctx.strokeStyle = "#5f59c5ff";
+      ctx.setLineDash([5, 3]);
       ctx.lineWidth = 2;
-      ctx.setLineDash([]);
       ctx.beginPath();
       ctx.moveTo(startX, 0); ctx.lineTo(startX, height);
-      ctx.moveTo(endX, 0);   ctx.lineTo(endX, height);
+      ctx.moveTo(endX, 0); ctx.lineTo(endX, height);
       ctx.stroke();
-
-      // Loop region labels
-      ctx.fillStyle = "#34d399";
-      ctx.font = "10px monospace";
-      if (startX > 4)       ctx.fillText("▶", startX + 3, 12);
-      if (endX < width - 4) ctx.fillText("◀", endX - 11, 12);
     }
 
     // Playhead
     if (duration > 0) {
       const playheadX = progressFraction * width;
       
-      // Draw speaker tags on waveform
+      // Speaker tags
       speakerTags.forEach(tag => {
         const tagX = (tag.time / duration) * width;
-        ctx.fillStyle = "#fbbf24";
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.6)";
+        ctx.setLineDash([2, 2]);
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(tagX, 0);
-        ctx.lineTo(tagX, height);
+        ctx.moveTo(tagX, 10);
+        ctx.lineTo(tagX, height - 10);
         ctx.stroke();
-        
-        ctx.font = "9px sans-serif";
-        ctx.fillText(tag.label, tagX + 2, height - 10);
       });
 
-      ctx.strokeStyle = "#f87171";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#ef4444";
       ctx.setLineDash([]);
+      ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, height);
       ctx.stroke();
 
-      ctx.fillStyle = "#f87171";
+      ctx.fillStyle = "#ef4444";
       ctx.beginPath();
-      ctx.arc(playheadX, 8, 5, 0, 2 * Math.PI);
+      ctx.arc(playheadX, height, 4, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(playheadX, 0, 4, 0, 2 * Math.PI);
       ctx.fill();
     }
-  }, [waveformData, loopStart, loopEnd, currentTime, duration]);
+  }, [waveformData, loopStart, loopEnd, currentTime, duration, speakerTags]);
 
-  // ─── Audio event listeners ─────────────────────────────────────────────────
+  // Audio event listeners
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
-
-      // Use refs so this handler doesn't need to be re-registered
-      if (
-        isLoopingRef.current &&
-        loopStartRef.current !== null &&
-        loopEndRef.current !== null
-      ) {
+      if (isLoopingRef.current && loopStartRef.current !== null && loopEndRef.current !== null) {
         const end = Math.max(loopStartRef.current, loopEndRef.current);
-        // Seek back slightly before the boundary to avoid a gap
         if (audio.currentTime >= end - 0.05) {
           audio.currentTime = Math.min(loopStartRef.current, loopEndRef.current);
         }
@@ -253,12 +331,8 @@ export function SimpleAudioPlayer({
 
     const handleLoadedMetadata = () => setDuration(audio.duration);
     const handleEnded = () => {
-      // If looping, restart immediately
       if (isLoopingRef.current && loopStartRef.current !== null) {
-        audio.currentTime = Math.min(
-          loopStartRef.current,
-          loopEndRef.current ?? loopStartRef.current
-        );
+        audio.currentTime = Math.min(loopStartRef.current, loopEndRef.current ?? loopStartRef.current);
         audio.play();
       } else {
         setIsPlaying(false);
@@ -274,10 +348,6 @@ export function SimpleAudioPlayer({
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
 
-    // Initial audio properties
-    audio.playbackRate = playbackRate;
-    audio.volume = isMuted ? 0 : volume;
-
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
@@ -285,9 +355,16 @@ export function SimpleAudioPlayer({
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [audioFile, playbackRate, volume, isMuted]);
+  }, [audioFile]);
 
-  // ─── Helpers ───────────────────────────────────────────────────────────────
+  // Update audio properties
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackRate;
+      audioRef.current.volume = isMuted ? 0 : volume;
+    }
+  }, [playbackRate, volume, isMuted]);
+
   const togglePlayPause = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -301,13 +378,6 @@ export function SimpleAudioPlayer({
     audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + seconds));
   }, []);
 
-  const seekToFraction = useCallback((fraction: number) => {
-    const audio = audioRef.current;
-    if (!audio || !duration) return;
-    audio.currentTime = Math.max(0, Math.min(duration, fraction * duration));
-  }, [duration]);
-
-  // Convert a MouseEvent on the canvas to a time value using rendered size
   const eventToTime = useCallback((e: React.MouseEvent): number => {
     const canvas = waveformRef.current;
     if (!canvas || !duration) return 0;
@@ -316,13 +386,11 @@ export function SimpleAudioPlayer({
     return fraction * duration;
   }, [duration]);
 
-  // ─── Waveform interaction ──────────────────────────────────────────────────
   const handleWaveformMouseDown = (e: React.MouseEvent) => {
     if (!duration) return;
     const t = eventToTime(e);
     setDragStartTime(t);
     setIsDragging(true);
-    // Reset loop; will only commit if user actually drags
     setLoopStart(t);
     setLoopEnd(t);
     setIsLooping(false);
@@ -338,42 +406,29 @@ export function SimpleAudioPlayer({
   const handleWaveformMouseUp = (e: React.MouseEvent) => {
     if (!isDragging || dragStartTime === null) return;
     setIsDragging(false);
-
     const t = eventToTime(e);
     const start = Math.min(dragStartTime, t);
-    const end   = Math.max(dragStartTime, t);
+    const end = Math.max(dragStartTime, t);
 
     if (end - start > 0.15) {
-      // Committed region — enable loop
       setLoopStart(start);
       setLoopEnd(end);
       setIsLooping(true);
-      const audio = audioRef.current;
-      if (audio) audio.currentTime = start;
+      if (audioRef.current) audioRef.current.currentTime = start;
     } else {
-      // Treat as a simple seek click
-      seekToFraction((e.clientX - (waveformRef.current?.getBoundingClientRect().left ?? 0)) /
-        (waveformRef.current?.getBoundingClientRect().width ?? 1));
+      if (audioRef.current) audioRef.current.currentTime = t;
       setLoopStart(null);
       setLoopEnd(null);
     }
-
     setDragStartTime(null);
-  };
-
-  const handleWaveformMouseLeave = (e: React.MouseEvent) => {
-    // If still dragging when mouse leaves, commit what we have
-    if (isDragging) handleWaveformMouseUp(e);
   };
 
   const toggleLoop = () => {
     if (loopStart !== null && loopEnd !== null) {
       const next = !isLooping;
       setIsLooping(next);
-      if (next) {
-        // Jump to loop start when re-enabling
-        const audio = audioRef.current;
-        if (audio) audio.currentTime = Math.min(loopStart, loopEnd);
+      if (next && audioRef.current) {
+        audioRef.current.currentTime = Math.min(loopStart, loopEnd);
       }
     }
   };
@@ -384,94 +439,42 @@ export function SimpleAudioPlayer({
     setIsLooping(false);
   };
 
-
-    // ─── Annotations ───────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
     onSave?.({ transcriptEnglish, transcriptKrio, category, status, speakerTags });
     setHasUnsavedChanges(false);
     setLastSavedTime(new Date());
   }, [onSave, transcriptEnglish, transcriptKrio, category, status, speakerTags]);
 
-  
-  // ─── Keyboard shortcuts — use refs so handlers never go stale ─────────────
-  const isPlayingRef = useRef(isPlaying);
-  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+S / Cmd+S: Save from anywhere (even while typing)
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleSave();
         return;
       }
 
-      const active = document.activeElement;
-      const isTyping =
-        active &&
-        (active.tagName === "INPUT" ||
-          active.tagName === "TEXTAREA" ||
-          active.tagName === "SELECT" ||
-          active.getAttribute("contenteditable") === "true");
+      const isTyping = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName || "");
       if (isTyping) return;
 
       switch (e.key) {
-        case " ":
-          e.preventDefault();
-          togglePlayPause();
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          e.shiftKey ? seekRelative(-5) : seekRelative(-1);
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          e.shiftKey ? seekRelative(5) : seekRelative(1);
-          break;
-        case "l":
-        case "L":
-          e.preventDefault();
-          toggleLoop();
-          break;
-        case "c":
-        case "C":
-          e.preventDefault();
-          clearLoop();
-          break;
-        case "n":
-        case "N":
-          if (hasNext) onNext?.();
-          break;
-        case "p":
-        case "P":
-          if (hasPrev) onPrev?.();
-          break;
-        case "Escape":
-          if (window.innerWidth < 1024) onClose?.();
-          break;
+        case " ": e.preventDefault(); togglePlayPause(); break;
+        case "ArrowLeft": e.preventDefault(); e.shiftKey ? seekRelative(-5) : seekRelative(-1); break;
+        case "ArrowRight": e.preventDefault(); e.shiftKey ? seekRelative(5) : seekRelative(1); break;
+        case "l": case "L": e.preventDefault(); toggleLoop(); break;
+        case "c": case "C": e.preventDefault(); clearLoop(); break;
+        case "n": case "N": if (hasNext) onNext?.(); break;
+        case "p": case "P": if (hasPrev) onPrev?.(); break;
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [togglePlayPause, seekRelative, handleSave, loopStart, loopEnd, isLooping, onClose, onNext, onPrev, hasNext, hasPrev]);
-
-
-  // Auto-save logic (debounced 30s)
-  useEffect(() => {
-    if (!hasUnsavedChanges) return;
-
-    const timer = setTimeout(() => {
-      handleSave();
-    }, 30000);
-
-    return () => clearTimeout(timer);
-  }, [hasUnsavedChanges, handleSave]);
+  }, [togglePlayPause, seekRelative, handleSave, loopStart, loopEnd, isLooping, onNext, onPrev, hasNext, hasPrev]);
 
   const handleTranslate = async () => {
     try {
       setIsLoading(true);
       setTranscriptEnglish(await translateAi(transcriptKrio));
+      setHasUnsavedChanges(true);
     } catch (err) {
       console.error("Translation error:", err);
     } finally {
@@ -483,6 +486,7 @@ export function SimpleAudioPlayer({
     try {
       setIsLoading(true);
       setTranscriptKrio(await transscribeKrioAi(audioFile.url));
+      setHasUnsavedChanges(true);
     } catch (err) {
       console.error("Transcription error:", err);
     } finally {
@@ -490,419 +494,519 @@ export function SimpleAudioPlayer({
     }
   };
 
-  const [customSpeakerLabel, setCustomSpeakerLabel] = useState("");
-
   const addSpeakerTag = (label: string) => {
     if (!label.trim()) return;
     setSpeakerTags(prev => [...prev, { time: currentTime, label: label.trim() }].sort((a, b) => a.time - b.time));
     setHasUnsavedChanges(true);
   };
 
-  const removeSpeakerTag = (index: number) => {
-    setSpeakerTags(prev => prev.filter((_, i) => i !== index));
-    setHasUnsavedChanges(true);
-  };
-
   const formatTime = (time: number) => {
-    const m  = Math.floor(time / 60);
-    const s  = Math.floor(time % 60);
+    const m = Math.floor(time / 60);
+    const s = Math.floor(time % 60);
     const ms = Math.floor((time % 1) * 100);
     return `${m}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
   };
 
-  const loopDuration =
-    loopStart !== null && loopEnd !== null
-      ? Math.abs(loopEnd - loopStart)
-      : null;
+  const statusBadge = useMemo(() => {
+    switch(status) {
+      case "pending": return <Badge variant="secondary" className="bg-slate-200 text-slate-700 gap-1.5"><Clock className="w-3 h-3" /> Pending</Badge>;
+      case "krio_done": return <Badge className="bg-blue-100 text-blue-700 gap-1.5 border-blue-200 hover:bg-blue-100"><MessageSquare className="w-3 h-3" /> Krio Done</Badge>;
+      case "english_done": return <Badge className="bg-indigo-100 text-indigo-700 gap-1.5 border-indigo-200 hover:bg-indigo-100"><Languages className="w-3 h-3" /> English Done</Badge>;
+      case "completed": return <Badge className="bg-green-100 text-green-700 gap-1.5 border-green-200 hover:bg-green-100"><CheckCircle2 className="w-3 h-3" /> Completed</Badge>;
+      case "verified": return <Badge className="bg-purple-100 text-purple-700 gap-1.5 border-purple-200 hover:bg-purple-100"><Sparkles className="w-3 h-3" /> Verified</Badge>;
+      default: return null;
+    }
+  }, [status]);
 
-  // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100vh-65px)] flex flex-col p-4 lg:p-6">
+    <div className="h-[calc(100vh-65px)] flex flex-col bg-slate-50/50 dark:bg-slate-950/50 overflow-hidden">
       <audio ref={audioRef} src={audioFile.url} preload="metadata" />
 
-      {/* Mobile back button + Nav */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="lg:hidden">
-          <Button variant="ghost" size="sm" onClick={onClose} className="flex items-center gap-2 -ml-2">
-            <ArrowLeft className="w-4 h-4" />
-            Back to List
+      {/* Header Bar */}
+      <div className="h-16 border-b bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-6 sticky top-0 z-20">
+        <div className="flex items-center gap-4 overflow-hidden">
+          <Button variant="ghost" size="icon" onClick={onClose} className="lg:hidden">
+            <ArrowLeft className="w-5 h-5" />
           </Button>
-        </div>
-        <div className="flex items-center gap-2 ml-auto">
-          {hasPrev && (
-            <Button variant="outline" size="sm" onClick={onPrev} title="Previous file (P)">
-              <SkipBack className="w-3.5 h-3.5 mr-1" /> Prev
-            </Button>
-          )}
-          {hasNext && (
-            <Button variant="outline" size="sm" onClick={onNext} title="Next file (N)">
-              Next <SkipForward className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="mb-4 lg:mb-6">
-        <h2 className="text-base lg:text-xl font-semibold mb-1 lg:mb-2 line-clamp-2">
-          {audioFile.name}
-        </h2>
-        <p className="text-xs lg:text-sm text-muted-foreground">
-          <span className="hidden sm:inline">Click & drag to select a loop region · click to seek</span>
-          <span className="sm:hidden">Tap waveform to seek</span>
-        </p>
-      </div>
-
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 overflow-y-auto pb-4">
-
-        {/* ── Audio Player ── */}
-        <div className="space-y-4 lg:space-y-5">
-
-          {/* Waveform canvas */}
-          <div className="relative select-none">
-            <canvas
-              ref={waveformRef}
-              width={800}
-              height={200}
-              className="w-full h-32 lg:h-48 border rounded-lg bg-slate-900 cursor-crosshair"
-              style={{ cursor: isDragging ? "col-resize" : "crosshair" }}
-              onMouseDown={handleWaveformMouseDown}
-              onMouseMove={handleWaveformMouseMove}
-              onMouseUp={handleWaveformMouseUp}
-              onMouseLeave={handleWaveformMouseLeave}
-            />
-
-            {waveformData.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-900 border rounded-lg">
-                <span className="text-slate-500 text-sm animate-pulse">Loading waveform…</span>
-              </div>
-            )}
-
-            {/* Drag hint overlay while dragging */}
-            {isDragging && loopStart !== null && loopEnd !== null && Math.abs(loopEnd - loopStart) > 0.1 && (
-              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-emerald-900/80 text-emerald-300 text-xs px-2 py-0.5 rounded pointer-events-none">
-                {formatTime(Math.min(loopStart, loopEnd))} → {formatTime(Math.max(loopStart, loopEnd))}
-              </div>
-            )}
+          <div className="flex flex-col">
+            <h2 className="text-sm lg:text-base font-bold truncate max-w-[200px] sm:max-w-md">
+              {audioFile.name}
+            </h2>
+            <div className="flex items-center gap-2 mt-0.5">
+              {statusBadge}
+              <span className="text-[10px] text-muted-foreground font-mono">{formatTime(currentTime)} / {formatTime(duration)}</span>
+            </div>
           </div>
+        </div>
 
-          {/* Transport controls */}
-          <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
-            <Button variant="outline" size="sm" onClick={() => seekRelative(-5)} title="Back 5s">
+        <div className="flex items-center gap-3">
+          <Sheet >
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2 border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50 text-indigo-700 h-9">
+                <BookOpen className="w-4 h-4" />
+                <span className="hidden sm:inline">Krio Cheat Sheet</span>
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className=" w-[50%] p-0 border-r-indigo-100">
+              <div className="h-full flex flex-col ">
+                <SheetHeader className="p-6 border-b bg-indigo-50/30">
+                  <SheetTitle className="flex items-center gap-2 text-indigo-900">
+                    <BookOpen className="w-5 h-5" />
+                    Standardized Krio Glossary
+                  </SheetTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Quick reference for standardized spelling and common variations.
+                  </p>
+                  <div className="relative mt-4">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input 
+                      placeholder="Search Krio or English..." 
+                      className="pl-9 bg-white border-indigo-100 focus-visible:ring-indigo-500"
+                      value={cheatSheetSearch}
+                      onChange={(e) => setCheatSheetSearch(e.target.value)}
+                    />
+                  </div>
+                </SheetHeader>
+                
+                <ScrollArea className="flex-1 overflow-auto">
+                  <div className="p-0">
+                    <Table>
+                      <TableHeader className="bg-slate-50 sticky top-0 z-10">
+                        <TableRow>
+                          <TableHead className="w-[120px] font-bold text-indigo-900">Standardized</TableHead>
+                          <TableHead className="w-[120px] font-medium">Variants</TableHead>
+                          <TableHead className="font-medium">Meaning</TableHead>
+                          <TableHead className="hidden md:table-cell font-medium">Example</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredCheatSheet.map((item, idx) => (
+                          <TableRow key={idx} className="hover:bg-indigo-50/50 transition-colors">
+                            <TableCell className="font-bold text-indigo-700">{item.krio}</TableCell>
+                            <TableCell className="text-xs text-slate-500 italic">{item.variant}</TableCell>
+                            <TableCell className="text-sm">{item.meaning}</TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              <div className="flex flex-col gap-1">
+                                <span className="text-xs font-medium text-slate-700 italic">"{item.example}"</span>
+                                <span className="text-[10px] text-muted-foreground">{item.translation}</span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </ScrollArea>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <div className="hidden sm:flex items-center gap-1 border rounded-lg p-1 bg-slate-100/50 dark:bg-slate-800/50">
+            <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!hasPrev} onClick={onPrev}>
               <SkipBack className="w-4 h-4" />
             </Button>
-
-            <Button
-              onClick={togglePlayPause}
-              size="lg"
-              className="min-w-[52px]"
-              title="Play / Pause (Space)"
-            >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-            </Button>
-
-            <Button variant="outline" size="sm" onClick={() => seekRelative(5)} title="Forward 5s">
+            <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!hasNext} onClick={onNext}>
               <SkipForward className="w-4 h-4" />
             </Button>
-
-            {/* Playback Speed */}
-            <div className="flex items-center gap-1.5 ml-1">
-              <Gauge className="w-4 h-4 text-muted-foreground" />
-              <Select value={playbackRate.toString()} onValueChange={(v) => setPlaybackRate(parseFloat(v))}>
-                <SelectTrigger className="h-8 w-[70px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                    <SelectItem key={rate} value={rate.toString()}>{rate}x</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Volume Control */}
-            <div className="flex items-center gap-2 ml-2 min-w-[100px] group">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
-                onClick={() => setIsMuted(!isMuted)}
-              >
-                {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </Button>
-              <Slider
-                value={[isMuted ? 0 : volume * 100]}
-                max={100}
-                step={1}
-                onValueChange={([v]) => {
-                  setVolume(v / 100);
-                  if (v > 0) setIsMuted(false);
-                }}
-                className="w-20"
-              />
-            </div>
-
-            {loopStart !== null && loopEnd !== null && (
-              <>
-                <Button
-                  variant={isLooping ? "default" : "outline"}
-                  size="sm"
-                  onClick={toggleLoop}
-                  title="Toggle loop (L)"
-                  className={
-                    isLooping
-                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                      : "border-emerald-500 text-emerald-700 hover:bg-emerald-50"
-                  }
-                >
-                  <RotateCcw className="w-4 h-4 mr-1.5" />
-                  <span>{isLooping ? "Looping" : "Loop"}</span>
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearLoop}
-                  title="Clear selection (C)"
-                  className="text-muted-foreground"
-                >
-                  <X className="w-3.5 h-3.5 mr-1" />
-                  <span className="hidden sm:inline">Clear</span>
-                </Button>
-              </>
-            )}
           </div>
-
-          {/* Time display */}
-          <div className="flex items-center gap-3 text-xs lg:text-sm text-muted-foreground font-mono">
-            <span>{formatTime(currentTime)}</span>
-            <span className="text-slate-400">/</span>
-            <span>{formatTime(duration)}</span>
-
-            {isLooping && loopDuration !== null && (
-              <span className="ml-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-xs font-sans">
-                Loop · {formatTime(loopDuration)}
-              </span>
+          
+          <Button 
+            onClick={handleSave} 
+            className={cn(
+              "gap-2 h-9 px-4 transition-all shadow-md",
+              hasUnsavedChanges ? "bg-indigo-600 hover:bg-indigo-700 animate-pulse-subtle" : "bg-emerald-600 hover:bg-emerald-700"
             )}
-          </div>
-
-          {/* Loop region info */}
-          {loopStart !== null && loopEnd !== null && !isDragging && (
-            <div className="text-xs text-muted-foreground font-mono bg-muted/40 rounded px-3 py-1.5 flex items-center gap-4">
-              <span>▶ {formatTime(Math.min(loopStart, loopEnd))}</span>
-              <span>◀ {formatTime(Math.max(loopStart, loopEnd))}</span>
-              <span className="text-slate-400">({formatTime(loopDuration!)})</span>
-            </div>
+          >
+            <Save className="w-4 h-4" />
+            <span className="hidden sm:inline">{hasUnsavedChanges ? "Save Changes" : "Save"}</span>
+          </Button>
+          
+          {onNext && hasNext && (
+            <Button variant="outline" size="icon" onClick={onNext} className="h-9 w-9">
+              <ArrowRight className="w-4 h-4" />
+            </Button>
           )}
         </div>
+      </div>
 
-        {/* ── Annotations ── */}
-        <div className="space-y-4 lg:space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h3 className="text-base lg:text-lg font-semibold">Annotations</h3>
-              {lastSavedTime && !hasUnsavedChanges && (
-                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                  Saved {lastSavedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleSave}
-                size="sm"
-                className={hasUnsavedChanges ? "bg-orange-600 hover:bg-orange-700" : ""}
-              >
-                <Save className="w-4 h-4 mr-2" />
-                {hasUnsavedChanges ? "Save Changes" : "Save"}
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="status" className="flex items-center gap-1.5 mb-1.5">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Status
-                </Label>
-                <Select value={status} onValueChange={(v) => { setStatus(v as typeof status); setHasUnsavedChanges(true); }}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-slate-400" /> Pending
+      <div className="flex-1 overflow-y-auto p-4 lg:p-6 custom-scrollbar">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 pb-20">
+          
+          {/* Left Side: Audio Player & Waveform */}
+          <div className="lg:col-span-5 space-y-6">
+            <Card className="border-none p-2 dark:shadow-none bg-white dark:bg-slate-900 overflow-hidden">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    <Music className="w-3.5 h-3.5" /> Waveform
+                  </CardTitle>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-6 w-6"><Info className="w-3.5 h-3.5 text-muted-foreground" /></Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="text-xs">Drag to select a loop region. Click to seek.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6 p-1">
+                <div className="relative group/wave">
+                  <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-100/5 rounded-xl -m-2 blur-xl opacity-0 group-hover/wave:opacity-100 transition-opacity" />
+                  <canvas
+                    ref={waveformRef}
+                    width={800}
+                    height={180}
+                    className="w-full bg-slate-800 h-40 lg:h-44 relative z-10 cursor-crosshair rounded-xl"
+                    onMouseDown={handleWaveformMouseDown}
+                    onMouseMove={handleWaveformMouseMove}
+                    onMouseUp={handleWaveformMouseUp}
+                  />
+                  {waveformData.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-xl z-20">
+                      <div className="flex flex-col items-center gap-2">
+                        <RotateCcw className="w-6 h-6 animate-spin text-indigo-500" />
+                        <span className="text-xs font-medium text-muted-foreground">Rendering…</span>
                       </div>
-                    </SelectItem>
-                    <SelectItem value="krio_done">
-                      <div className="flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-blue-400" /> Krio Done
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-6">
+                  <div className="flex items-center justify-center gap-6">
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-indigo-600" onClick={() => seekRelative(-5)}>
+                      <SkipBack className="w-6 h-6" />
+                    </Button>
+                    <Button 
+                      size="icon" 
+                      className="h-14 w-14 rounded-full bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-none"
+                      onClick={togglePlayPause}
+                    >
+                      {isPlaying ? <Pause className="w-7 h-7 fill-current" /> : <Play className="w-7 h-7 fill-current ml-1" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-indigo-600" onClick={() => seekRelative(5)}>
+                      <SkipForward className="w-6 h-6" />
+                    </Button>
+                  </div>
+                  <span className="text-[18px] self-center text-muted-foreground font-mono">{formatTime(currentTime)} / {formatTime(duration)}</span>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                      <Gauge className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <Select value={playbackRate.toString()} onValueChange={(v) => setPlaybackRate(parseFloat(v))}>
+                        <SelectTrigger className="h-8 border-none bg-transparent focus:ring-0 text-xs font-bold">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                            <SelectItem key={rate} value={rate.toString()}>{rate}x</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg group/volume">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 p-0 shrink-0" onClick={() => setIsMuted(!isMuted)}>
+                        {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                      </Button>
+                      <Slider
+                        value={[isMuted ? 0 : volume * 100]}
+                        max={100}
+                        step={1}
+                        onValueChange={([v]) => { setVolume(v / 100); if (v > 0) setIsMuted(false); }}
+                        className="flex-1"
+                      />
+                    </div>
+                  </div>
+
+                  {(loopStart !== null && loopEnd !== null) && (
+                    <div className="flex items-center gap-2 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800/30 animate-in fade-in slide-in-from-top-2">
+                      <RotateCcw className={cn("w-4 h-4 text-indigo-600", isLooping && "animate-spin-slow")} />
+                      <div className="flex-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-400 font-mono">
+                        {formatTime(Math.min(loopStart, loopEnd))} — {formatTime(Math.max(loopStart, loopEnd))}
                       </div>
-                    </SelectItem>
-                    <SelectItem value="english_done">
-                      <div className="flex items-center gap-2">
-                        <MessageSquare className="w-4 h-4 text-indigo-400" /> English Done
+                      <div className="flex items-center gap-1">
+                        <Button 
+                          variant={isLooping ? "default" : "outline"} 
+                          size="xs" 
+                          className="h-7 text-[10px] font-bold px-3 rounded-lg"
+                          onClick={toggleLoop}
+                        >
+                          {isLooping ? "Looping" : "Activate"}
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-indigo-600" onClick={clearLoop}>
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
-                    </SelectItem>
-                    <SelectItem value="completed">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-green-500" /> Completed
-                      </div>
-                    </SelectItem>
-                    {isAdmin && (
-                      <SelectItem value="verified">
-                        <div className="flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4 text-purple-500" /> Verified
-                        </div>
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
-              <div>
-                <Label htmlFor="category" className="flex items-center gap-1.5 mb-1.5">
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  Category
-                </Label>
-                <Select value={category} onValueChange={(v) => { setCategory(v); setHasUnsavedChanges(true); }}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["conversation","monologue","interview","story","news","music","other"].map((v) => (
-                      <SelectItem key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex gap-2 mb-2 flex-wrap items-center">
-                <Label htmlFor="transcript-krio">Transcript (Krio)</Label>
-                <Button className="cursor-pointer h-8 text-xs" onClick={handleTranscribe} size="sm" disabled={isLoading}>
-                  <Sparkles className="w-3 h-3 mr-1" />
-                  {isLoading ? "Transcribing…" : "Pre-transcribe"}
-                </Button>
-              </div>
-              <Textarea
-                id="transcript-krio"
-                placeholder="Enter Krio transcript…"
-                value={transcriptKrio}
-                onChange={(e) => { setTranscriptKrio(e.target.value); setHasUnsavedChanges(true); }}
-                className="min-h-[100px] lg:min-h-[120px] resize-none text-sm"
-              />
-            </div>
-
-            <div>
-              <div className="flex gap-2 mb-2 flex-wrap items-center">
-                <Label htmlFor="transcript-english">Transcript (English)</Label>
-                <Button className="cursor-pointer h-8 text-xs" onClick={handleTranslate} size="sm" disabled={isLoading}>
-                  <Sparkles className="w-3 h-3 mr-1" />
-                  {isLoading ? "Translating…" : "Translate"}
-                </Button>
-              </div>
-              <Textarea
-                id="transcript-english"
-                placeholder="Enter English transcript…"
-                value={transcriptEnglish}
-                onChange={(e) => { setTranscriptEnglish(e.target.value); setHasUnsavedChanges(true); }}
-                className="min-h-[100px] lg:min-h-[120px] resize-none text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3 pt-4 border-t">
-            <div className="flex items-center justify-between">
-              <Label className="flex items-center gap-1.5">
-                <UserPlus className="w-3.5 h-3.5" />
-                Speaker Tags
-              </Label>
-              <div className="flex gap-1 flex-wrap">
-                {["Speaker A", "Speaker B", "Interviewer"].map(label => (
-                  <Button 
-                    key={label} 
-                    variant="outline" 
-                    size="xs" 
-                    className="h-6 px-2 text-[10px]"
-                    onClick={() => addSpeakerTag(label)}
-                  >
-                    + {label}
-                  </Button>
+            {/* Keyboard Shortcuts Card */}
+            <Card className="border-none bg-slate-100/50 dark:bg-slate-900/30">
+              <CardHeader className="py-3">
+                <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <Keyboard className="w-3.5 h-3.5" /> Shortcuts
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-2 gap-y-2 gap-x-4 pb-4">
+                {[
+                  { k: "Space", d: "Play/Pause" },
+                  { k: "← / →", d: "Seek 1s" },
+                  { k: "Shift + ← / →", d: "Seek 5s" },
+                  { k: "L", d: "Toggle Loop" },
+                  { k: "C", d: "Clear Loop" },
+                  { k: "N / P", d: "Next/Prev File" },
+                  { k: "Ctrl + S", d: "Save" },
+                ].map(({ k, d }) => (
+                  <div key={k} className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground font-medium">{d}</span>
+                    <kbd className="px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 font-mono shadow-sm">{k}</kbd>
+                  </div>
                 ))}
-              </div>
-            </div>
-
-            {/* Custom speaker label input */}
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Custom label..."
-                className="h-7 text-xs flex-1"
-                value={customSpeakerLabel}
-                onChange={(e) => setCustomSpeakerLabel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && customSpeakerLabel.trim()) {
-                    addSpeakerTag(customSpeakerLabel);
-                    setCustomSpeakerLabel("");
-                  }
-                }}
-              />
-              <Button
-                variant="outline"
-                size="xs"
-                className="h-7 text-[10px]"
-                onClick={() => {
-                  if (customSpeakerLabel.trim()) {
-                    addSpeakerTag(customSpeakerLabel);
-                    setCustomSpeakerLabel("");
-                  }
-                }}
-              >
-                Add
-              </Button>
-            </div>
-            
-            <div className="flex flex-wrap gap-2">
-              {speakerTags.length === 0 ? (
-                <p className="text-[10px] text-muted-foreground italic">No speaker tags added. Position playhead and click a label above.</p>
-              ) : (
-                speakerTags.map((tag, i) => (
-                  <Badge key={i} variant="secondary" className="gap-1.5 px-2 py-0.5 text-[10px] cursor-pointer" onClick={() => {
-                    const audio = audioRef.current;
-                    if (audio) audio.currentTime = tag.time;
-                  }}>
-                    <span className="font-mono text-slate-500">{formatTime(tag.time)}</span>
-                    {tag.label}
-                    <X className="w-2.5 h-2.5 cursor-pointer hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeSpeakerTag(i); }} />
-                  </Badge>
-                ))
-              )}
-            </div>
+              </CardContent>
+            </Card>
           </div>
 
-          {hasUnsavedChanges && (
-            <div className="p-3 bg-orange-50 border border-orange-200 rounded-md">
-              <p className="text-sm text-orange-800">You have unsaved changes</p>
-            </div>
-          )}
+          {/* Right Side: Annotations & Speaker Tags */}
+          <div className="lg:col-span-7 space-y-6">
+            <Card className="border-none shadow-xl shadow-slate-200/50 dark:shadow-none bg-white dark:bg-slate-900">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Control Panel
+                  </CardTitle>
+                  {lastSavedTime && (
+                    <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                      <History className="w-3 h-3" />
+                      Auto-saved at {lastSavedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold">Category</Label>
+                    <Select value={category} onValueChange={(v) => { setCategory(v); setHasUnsavedChanges(true); }}>
+                      <SelectTrigger className="h-10 bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl">
+                        <SelectValue placeholder="Select Category" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl shadow-2xl">
+                        {["conversation","monologue","interview","story","news","music","other"].map((v) => (
+                          <SelectItem key={v} value={v} className="rounded-lg capitalize">{v}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold">Transcription Status</Label>
+                    <Select value={status} onValueChange={(v) => { setStatus(v as typeof status); setHasUnsavedChanges(true); }}>
+                      <SelectTrigger className="h-10 bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl shadow-2xl">
+                        <SelectItem value="pending" className="rounded-lg"><div className="flex items-center gap-2"><Clock className="w-3.5 h-3.5 text-slate-400" /> Pending</div></SelectItem>
+                        <SelectItem value="krio_done" className="rounded-lg"><div className="flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5 text-blue-400" /> Krio Done</div></SelectItem>
+                        <SelectItem value="english_done" className="rounded-lg"><div className="flex items-center gap-2"><Languages className="w-3.5 h-3.5 text-indigo-400" /> English Done</div></SelectItem>
+                        <SelectItem value="completed" className="rounded-lg"><div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> Completed</div></SelectItem>
+                        {isAdmin && (
+                          <SelectItem value="verified" className="rounded-lg"><div className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-purple-500" /> Verified</div></SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <Separator className="bg-slate-100 dark:bg-slate-800" />
+
+                <div className="space-y-6">
+                  {/* Krio Transcript Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold flex items-center gap-2">
+                        Transcript (Krio)
+                      </Label>
+                      <Button 
+                        size="xs" 
+                        variant="secondary" 
+                        className="h-8 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-100 dark:border-indigo-800 rounded-lg gap-2"
+                        onClick={handleTranscribe}
+                        disabled={isLoading}
+                      >
+                        <Sparkles className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
+                        {isLoading ? "Analyzing..." : "AI Auto-Transcribe"}
+                      </Button>
+                    </div>
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-indigo-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
+                      <Textarea
+                        value={transcriptKrio}
+                        placeholder="Listen and type the Krio transcription here…"
+                        onChange={(e) => { setTranscriptKrio(e.target.value); setHasUnsavedChanges(true); }}
+                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
+                      />
+                    </div>
+                  </div>
+
+                  {/* English Transcript Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold flex items-center gap-2">
+                        Transcript (English)
+                      </Label>
+                      <Button 
+                        size="xs" 
+                        variant="secondary" 
+                        className="h-8 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-100 dark:border-purple-800 rounded-lg gap-2"
+                        onClick={handleTranslate}
+                        disabled={isLoading || !transcriptKrio}
+                      >
+                        <Languages className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
+                        {isLoading ? "Translating..." : "AI Auto-Translate"}
+                      </Button>
+                    </div>
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-purple-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
+                      <Textarea
+                        value={transcriptEnglish}
+                        placeholder="English translation will appear here or can be manually entered…"
+                        onChange={(e) => { setTranscriptEnglish(e.target.value); setHasUnsavedChanges(true); }}
+                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-purple-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <Separator className="bg-slate-100 dark:bg-slate-800" />
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                      <UserPlus className="w-3.5 h-3.5" /> Speaker Tags
+                    </Label>
+                    <div className="flex gap-1.5">
+                      {["Speaker A", "Speaker B", "Interviewer"].map(label => (
+                        <Button 
+                          key={label} 
+                          variant="outline" 
+                          size="xs" 
+                          className="h-7 px-3 text-[10px] font-bold rounded-full border-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          onClick={() => addSpeakerTag(label)}
+                        >
+                          + {label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Add custom speaker label…"
+                        className="h-9 bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl text-xs px-4"
+                        value={customSpeakerLabel}
+                        onChange={(e) => setCustomSpeakerLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && customSpeakerLabel.trim()) {
+                            addSpeakerTag(customSpeakerLabel);
+                            setCustomSpeakerLabel("");
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-9 rounded-xl px-4"
+                        onClick={() => {
+                          if (customSpeakerLabel.trim()) {
+                            addSpeakerTag(customSpeakerLabel);
+                            setCustomSpeakerLabel("");
+                          }
+                        }}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-slate-50/50 dark:bg-slate-800/20 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                      {speakerTags.length === 0 ? (
+                        <div className="w-full text-center py-1">
+                          <p className="text-[10px] text-muted-foreground italic flex items-center justify-center gap-2">
+                            <Info className="w-3 h-3" /> No speaker tags yet. Position the playhead and click a label above.
+                          </p>
+                        </div>
+                      ) : (
+                        speakerTags.map((tag, i) => (
+                          <Badge 
+                            key={i} 
+                            variant="secondary" 
+                            className="gap-2 pl-1 pr-1.5 py-1 text-[10px] rounded-lg bg-white dark:bg-slate-800 border shadow-sm group/tag transition-all hover:border-indigo-300"
+                          >
+                            <span 
+                              className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-mono font-bold cursor-pointer hover:bg-indigo-600 hover:text-white transition-colors"
+                              onClick={() => { if (audioRef.current) audioRef.current.currentTime = tag.time; }}
+                            >
+                              {formatTime(tag.time)}
+                            </span>
+                            <span className="font-semibold">{tag.label}</span>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-4 w-4 p-0 opacity-0 group-hover/tag:opacity-100 transition-opacity hover:text-red-500"
+                              onClick={() => setSpeakerTags(prev => prev.filter((_, idx) => idx !== i))}
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </Badge>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+              {hasUnsavedChanges && (
+                <CardFooter className="py-3 bg-amber-50 dark:bg-amber-900/10 border-t border-amber-100 dark:border-amber-900/30 flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  <p className="text-[10px] font-bold text-amber-800 dark:text-amber-400 uppercase tracking-widest">Unsaved Changes Detected</p>
+                </CardFooter>
+              )}
+            </Card>
+          </div>
         </div>
       </div>
 
-      {/* Keyboard shortcuts legend */}
-      <div className="border-t pt-3 lg:pt-4 text-xs text-muted-foreground mt-4">
-        <div className="flex gap-3 lg:gap-6 flex-wrap">
-          <span>Space: Play/Pause</span>
-          <span>←/→: Seek 1s</span>
-          <span>Shift+←/→: Seek 5s</span>
-          <span>L: Toggle loop</span>
-          <span>C: Clear region</span>
-          <span>Ctrl+S: Save</span>
-          <span>N/P: Next/Prev file</span>
-          <span className="hidden lg:inline">Click & drag: Loop</span>
-        </div>
-      </div>
+      <style jsx global>{`
+        @keyframes pulse-subtle {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.95; transform: scale(0.98); }
+        }
+        .animate-pulse-subtle {
+          animation: pulse-subtle 2s ease-in-out infinite;
+        }
+        .animate-spin-slow {
+          animation: spin 3s linear infinite;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #e2e8f0;
+          border-radius: 10px;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #1e293b;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+      `}</style>
     </div>
   );
 }

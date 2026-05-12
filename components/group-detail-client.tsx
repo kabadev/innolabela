@@ -31,16 +31,18 @@ import { translateAi, transscribeKrioAi } from "@/app/transcribe";
 import { Uploader } from "./uploader";
 import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
 import { useUser } from "@clerk/nextjs";
-import { hasPermission, UserRole } from "@/lib/utils";
+import { cn, hasPermission, UserRole } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface GroupDetailClientProps {
   initialGroup: AudioGroup;
+  initialGlossary?: any[];
 }
 
-export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
+export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupDetailClientProps) {
   const router = useRouter();
   const { user } = useUser();
+  const isAdmin = user && hasPermission(user.publicMetadata?.role as UserRole, ["Admin", "Project Lead"]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [group, setGroup] = useState<AudioGroup>(initialGroup);
@@ -358,7 +360,7 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
       <div
         className={`${
           selectedAudio ? "hidden lg:flex" : "flex"
-        } w-full lg:w-80 border-r flex-col bg-muted/30`}
+        } w-full lg:w-80 border-r flex-col bg-slate-50/50 dark:bg-slate-900/50 backdrop-blur-xl z-10 transition-all`}
       >
         <div className="p-4 border-b ">
           <div className="flex items-center gap-2 mb-3">
@@ -441,13 +443,13 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             )}
           </div>
 
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-            <span>{group.audioFiles.length} / 100 files</span>
-            <span>{getAnnotatedCount()} annotated</span>
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-2 px-1">
+            <span className="font-medium">{group.audioFiles.length} / 100 files</span>
+            <span className="font-medium text-indigo-600">{getAnnotatedCount()} annotated</span>
           </div>
-          <div className="w-full bg-muted rounded-full h-1 mt-1">
+          <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden shadow-inner">
             <div
-              className="bg-primary rounded-full h-1 transition-all"
+              className="bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full h-full transition-all duration-500 ease-out"
               style={{ width: `${(group.audioFiles.length / 100) * 100}%` }}
             />
           </div>
@@ -477,43 +479,60 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
               </div>
             </div>
           ) : (
-            <div className="p-2 space-y-1 h-[calc(100vh-320px)] overflow-y-auto">
-              {filteredAudioFiles.map((file) => (
-                <div
-                  key={file.id}
-                  className={`p-3 rounded-lg cursor-pointer transition-all group hover:bg-background ${
-                    selectedAudio?.id === file.id
-                      ? "bg-background shadow-sm border border-primary/50"
-                      : ""
-                  }`}
-                  onClick={() => handleAudioClick(file)}
-                >
-                  <div className="flex items-start gap-2">
-                    <Music className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {file.annotations?.transcriptKrio || file.name}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <p className="text-xs text-muted-foreground">
-                          {formatDuration(file.duration)}
-                        </p>
-                        <span className={`inline-block w-2 h-2 rounded-full ${getStatusColor(file.annotations?.status)}`} title={getStatusLabel(file.annotations?.status)} />
-                        <span className="text-[10px] text-muted-foreground">{getStatusLabel(file.annotations?.status)}</span>
+            <div className="p-3 space-y-2 h-[calc(100vh-320px)] overflow-y-auto custom-scrollbar">
+              {filteredAudioFiles.map((file) => {
+                const isActive = selectedAudio?.id === file.id;
+                const isDone = isAnnotated(file);
+                
+                return (
+                  <div
+                    key={file.id}
+                    className={cn(
+                      "group p-3 rounded-xl cursor-pointer transition-all duration-200 border relative overflow-hidden",
+                      isActive 
+                        ? "bg-white dark:bg-slate-800 shadow-md border-indigo-200 dark:border-indigo-800 ring-1 ring-indigo-500/10" 
+                        : "bg-transparent border-transparent hover:bg-white/60 dark:hover:bg-slate-800/40 hover:border-slate-200 dark:hover:border-slate-700"
+                    )}
+                    onClick={() => handleAudioClick(file)}
+                  >
+                    {isActive && (
+                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500 rounded-r-full" />
+                    )}
+                    
+                    <div className="flex items-start gap-3">
+                      <div className={cn(
+                        "p-2 rounded-lg transition-colors",
+                        isActive ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600" : "bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/20 group-hover:text-indigo-500"
+                      )}>
+                        <Music className="w-4 h-4" />
                       </div>
-                    </div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <p className={cn(
+                          "text-xs font-bold truncate transition-colors",
+                          isActive ? "text-indigo-900 dark:text-indigo-100" : "text-slate-700 dark:text-slate-300 group-hover:text-indigo-700 dark:group-hover:text-indigo-300"
+                        )}>
+                          {file.annotations?.transcriptKrio || file.name}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {formatDuration(file.duration)}
+                          </span>
+                          <span className={cn(
+                            "w-1.5 h-1.5 rounded-full",
+                            getStatusColor(file.annotations?.status)
+                          )} />
+                          <span className="text-[10px] font-medium text-slate-400 capitalize">
+                            {getStatusLabel(file.annotations?.status)}
+                          </span>
+                        </div>
+                      </div>
 
-                    {user &&
-                      hasPermission(user?.publicMetadata?.role as UserRole, [
-                        "Admin",
-                        // "Supervisor",
-                        "Project Lead",
-                        // "Technical Lead",
-                      ]) && (
+                      {user && isAdmin && (
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
+                          size="icon"
+                          className="h-7 w-7 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (confirm(`Delete "${file.name}"?`)) {
@@ -521,12 +540,20 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
                             }
                           }}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       )}
+                    </div>
+                    
+                    {/* Progress indicator for small items */}
+                    {isDone && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-green-500/20">
+                        <div className="h-full bg-green-500 w-full" />
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -553,6 +580,7 @@ export function GroupDetailClient({ initialGroup }: GroupDetailClientProps) {
             }}
             hasNext={group.audioFiles.findIndex(f => f.id === selectedAudio.id) < group.audioFiles.length - 1}
             hasPrev={group.audioFiles.findIndex(f => f.id === selectedAudio.id) > 0}
+            initialGlossary={initialGlossary}
           />
         ) : (
           <div className="h-[calc(100vh-65px)] w-full  flex items-center justify-center text-muted-foreground">

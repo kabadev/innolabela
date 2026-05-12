@@ -1,12 +1,26 @@
 "use client"
 
 import type React from "react"
-
+import { useState, useMemo } from "react"
 import type { AudioGroup, AudioFile } from "./audio-annotation-system"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { FolderOpen, Music, Trash2, Plus, Upload } from "lucide-react"
-import { useState } from "react"
+import { 
+  FolderOpen, 
+  Music, 
+  Trash2, 
+  Plus, 
+  Upload, 
+  Calendar, 
+  Clock, 
+  CheckCircle2,
+  FileAudio,
+  Search,
+  SortDesc,
+  SortAsc
+} from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
 interface GroupsListProps {
   groups: AudioGroup[]
@@ -20,6 +34,8 @@ export function GroupsList({ groups, onSelectGroup, onDeleteGroup, onCreateGroup
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string>("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest")
 
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString("en-US", {
@@ -102,157 +118,241 @@ export function GroupsList({ groups, onSelectGroup, onDeleteGroup, onCreateGroup
     setShowModal(false)
   }
 
+  const sortedAndFilteredGroups = useMemo(() => {
+    const filtered = groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    return [...filtered].sort((a, b) => {
+      const timeA = new Date(a.dateAdded).getTime()
+      const timeB = new Date(b.dateAdded).getTime()
+      return sortOrder === "newest" ? timeB - timeA : timeA - timeB
+    })
+  }, [groups, searchQuery, sortOrder])
+
   return (
-    <div className="h-full flex flex-col">
-      <div className="p-6 border-b">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-xl font-semibold">Audio Groups</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Organize your audio files into groups of up to 100 files each
-            </p>
+    <div className="h-full flex flex-col bg-background/50">
+      <div className="p-6 border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+        <div className="flex flex-col space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Audio Groups</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Manage and organize your audio collection
+              </p>
+            </div>
+            <Button onClick={() => setShowModal(true)} className="gap-2 shadow-lg shadow-primary/20">
+              <Plus className="w-4 h-4" />
+              Add Group
+            </Button>
           </div>
-          <Button onClick={() => setShowModal(true)} className="gap-2">
-            <Plus className="w-4 h-4" />
-            Add Group
-          </Button>
+
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search groups..."
+                className="pl-9 h-10 bg-background/50"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              onClick={() => setSortOrder(prev => prev === "newest" ? "oldest" : "newest")}
+              title={sortOrder === "newest" ? "Newest First" : "Oldest First"}
+            >
+              {sortOrder === "newest" ? <SortDesc className="w-4 h-4" /> : <SortAsc className="w-4 h-4" />}
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        {groups.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center text-muted-foreground">
-              <FolderOpen className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <h3 className="text-lg font-medium mb-2">No groups yet</h3>
-              <p className="text-sm mb-4">Create a group and upload audio files to get started</p>
-              <Button onClick={() => setShowModal(true)}>
+      <div className="flex-1 overflow-y-auto p-6 scroll-smooth custom-scrollbar">
+        {sortedAndFilteredGroups.length === 0 ? (
+          <div className="flex items-center justify-center h-full min-h-[300px]">
+            <div className="text-center max-w-xs">
+              <div className="bg-muted/50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-muted-foreground">
+                <FolderOpen className="w-8 h-8 opacity-20" />
+              </div>
+              <h3 className="text-lg font-medium mb-1">No groups found</h3>
+              <p className="text-sm text-muted-foreground mb-6">
+                {searchQuery ? "Try a different search term" : "Create your first group to get started"}
+              </p>
+              <Button onClick={() => setShowModal(true)} variant="outline" className="rounded-full px-6">
                 <Plus className="w-4 h-4 mr-2" />
-                Create First Group
+                Create Group
               </Button>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {groups.map((group) => (
-              <Card
-                key={group.id}
-                className="p-4 cursor-pointer transition-all hover:shadow-md hover:border-primary/50 group"
-                onClick={() => onSelectGroup(group)}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <FolderOpen className="w-5 h-5 text-primary" />
-                    <h3 className="font-semibold">{group.name}</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {sortedAndFilteredGroups.map((group) => {
+              const annotated = getAnnotatedCount(group);
+              const total = group.audioFiles.length;
+              const progress = Math.round((annotated / total) * 100) || 0;
+
+              return (
+                <Card
+                  key={group.id}
+                  className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer border-muted/50 bg-card"
+                  onClick={() => onSelectGroup(group)}
+                >
+                  <div className="p-5">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                          <FileAudio className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold line-clamp-1">{group.name}</h3>
+                          <p className="text-[10px] text-muted-foreground flex items-center gap-1 uppercase tracking-wider font-semibold">
+                            <Calendar className="w-3 h-3" />
+                            {formatDate(group.dateAdded)}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (confirm(`Delete group "${group.name}"?`)) {
+                            onDeleteGroup(group.id)
+                          }
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-4 mb-5">
+                      <div className="flex-1">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Files</p>
+                        <p className="text-sm font-semibold">{total} / 100</p>
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Status</p>
+                        <div className="flex items-center gap-1">
+                          {progress === 100 ? (
+                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <Clock className="w-4 h-4 text-amber-500" />
+                          )}
+                          <span className={cn("text-sm font-semibold", progress === 100 ? "text-green-600" : "text-amber-600")}>
+                            {progress}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className={cn("h-full transition-all duration-500", progress === 100 ? "bg-green-500" : "bg-primary")}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 hover:bg-destructive hover:text-destructive-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (confirm(`Delete group "${group.name}"? This will remove all audio files in this group.`)) {
-                        onDeleteGroup(group.id)
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
-                </div>
-
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Music className="w-4 h-4" />
-                    <span>{group.audioFiles.length} / 100 audio files</span>
+                  <div className="absolute top-0 left-0 w-full h-1 bg-primary/20">
+                    <div className="h-full bg-primary" style={{ width: `${(total/100)*100}%` }} />
                   </div>
-
-                  <div className="text-muted-foreground">Added: {formatDate(group.dateAdded)}</div>
-
-                  {getAnnotatedCount(group) > 0 && (
-                    <div className="text-green-600 text-xs">✓ {getAnnotatedCount(group)} annotated</div>
-                  )}
-                </div>
-
-                <div className="mt-3 pt-3 border-t">
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div
-                      className="bg-primary rounded-full h-2 transition-all"
-                      style={{ width: `${(group.audioFiles.length / 100) * 100}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1 text-center">
-                    {100 - group.audioFiles.length} slots remaining
-                  </p>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-2xl p-6 m-4">
-            <h3 className="text-lg font-semibold mb-4">Create New Group</h3>
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-2xl shadow-2xl">
+            <div className="p-6">
+              <h3 className="text-xl font-bold mb-4">Create New Group</h3>
 
-            <div
-              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25"
-              }`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground mb-2">Drag and drop audio files here, or</p>
-              <label className="cursor-pointer">
-                <input type="file" multiple accept="audio/*" className="hidden" onChange={handleFileSelect} />
-                <Button variant="outline" size="sm" asChild>
-                  <span>Browse Files</span>
-                </Button>
-              </label>
-              <p className="text-xs text-muted-foreground mt-4">Maximum 100 audio files per group</p>
-            </div>
-
-            {error && (
-              <div className="mt-4 p-3 bg-destructive/10 border border-destructive rounded-lg text-destructive text-sm">
-                {error}
-              </div>
-            )}
-
-            {selectedFiles.length > 0 && (
-              <div className="mt-4">
-                <h4 className="font-medium mb-2">Selected Files ({selectedFiles.length})</h4>
-                <div className="max-h-40 overflow-y-auto space-y-1">
-                  {selectedFiles.map((file, index) => (
-                    <div key={index} className="text-sm text-muted-foreground flex items-center gap-2">
-                      <Music className="w-4 h-4" />
-                      {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-2 mt-6">
-              <Button
-                variant="outline"
-                className="flex-1 bg-transparent"
-                onClick={() => {
-                  setShowModal(false)
-                  setSelectedFiles([])
-                  setError("")
-                }}
+              <div
+                className={cn(
+                  "border-2 border-dashed rounded-xl p-12 text-center transition-all cursor-pointer",
+                  isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/20 hover:border-primary/40"
+                )}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                Cancel
-              </Button>
-              <Button className="flex-1" onClick={handleCreateGroup} disabled={selectedFiles.length === 0}>
-                Create Group with {selectedFiles.length} Files
-              </Button>
+                <Upload className="w-12 h-12 mx-auto mb-4 text-primary opacity-50" />
+                <p className="text-sm font-medium mb-1">Drag and drop audio files here</p>
+                <p className="text-xs text-muted-foreground mb-6">or click to browse from your computer</p>
+                
+                <label className="cursor-pointer">
+                  <input type="file" multiple accept="audio/*" className="hidden" onChange={handleFileSelect} />
+                  <Button variant="secondary" size="sm" asChild>
+                    <span>Select Files</span>
+                  </Button>
+                </label>
+                <p className="text-[10px] text-muted-foreground mt-6 uppercase tracking-widest font-bold">Max 100 files</p>
+              </div>
+
+              {error && (
+                <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-xs font-medium">
+                  {error}
+                </div>
+              )}
+
+              {selectedFiles.length > 0 && (
+                <div className="mt-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-bold">Selected Files ({selectedFiles.length})</h4>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedFiles([])} className="h-7 text-xs text-muted-foreground">Clear all</Button>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                    {selectedFiles.map((file, index) => (
+                      <div key={index} className="text-xs p-2 bg-muted/30 rounded flex items-center gap-2">
+                        <Music className="w-3.5 h-3.5 text-primary" />
+                        <span className="flex-1 truncate">{file.name}</span>
+                        <span className="text-muted-foreground font-mono">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 mt-8">
+                <Button
+                  variant="ghost"
+                  className="flex-1"
+                  onClick={() => {
+                    setShowModal(false)
+                    setSelectedFiles([])
+                    setError("")
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button className="flex-1 shadow-lg shadow-primary/20" onClick={handleCreateGroup} disabled={selectedFiles.length === 0}>
+                  Create Group ({selectedFiles.length})
+                </Button>
+              </div>
             </div>
           </Card>
         </div>
       )}
+      
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 5px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: var(--muted);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: var(--primary);
+        }
+      `}</style>
     </div>
   )
 }

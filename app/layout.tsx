@@ -7,11 +7,11 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { AppProvider } from "@/context/AppContext";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Toaster } from "sonner";
-
+import { shadcn } from "@clerk/ui/themes";
 export const metadata: Metadata = {
-  title: "Innovisal Audio Labeler App",
-  description: "Created with Innovisal Audio Labeler",
-  generator: "Innovisal",
+  title: "CivilPlus Audio Labeler App",
+  description: "Created with CivilPlus Audio Labeler",
+  generator: "CivilPlus",
 };
 
 export default function RootLayout({
@@ -20,7 +20,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider >
+    <ClerkProvider  appearance={{
+        baseTheme: shadcn,
+      }} >
       <html lang="en">
         <body
           className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}

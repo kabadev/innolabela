@@ -91,7 +91,7 @@ const Navbar = () => {
               <DropdownMenuSeparator />
               {user.publicMetadata.role !== "Annotators" && (
                 <DropdownMenuItem asChild>
-                  <Link href="/controls">Control Panel</Link>
+                  <Link href="/controls" target="_blank">Control Panel</Link>
                 </DropdownMenuItem>
               )}
 

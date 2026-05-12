@@ -49,7 +49,7 @@ export function AdminHeader() {
                 <DropdownMenuLabel>My Account</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
-                  <Link href={`/controls`}>Controls</Link>
+                  <Link href={`/`} target="_blank">Home</Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem>
                   <Link href={"/account"}>Account</Link>
