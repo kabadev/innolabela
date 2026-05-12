@@ -205,8 +205,8 @@ export async function updateAudioAnnotations(
   await connectDB();
 
   // Get the old file for audit diff
-  const oldFile = await AudioFile.findById(audioId).lean();
-  const beforeAnnotations = oldFile?.annotations;
+  const oldFile:any = await AudioFile.findById(audioId).lean();
+  const beforeAnnotations = oldFile?.annotations!;
 
   const audioFile = await AudioFile.findByIdAndUpdate(
     audioId,
