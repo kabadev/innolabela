@@ -288,13 +288,37 @@ export function SimpleAudioPlayer({
       // Speaker tags
       speakerTags.forEach(tag => {
         const tagX = (tag.time / duration) * width;
-        ctx.strokeStyle = "rgba(245, 158, 11, 0.6)";
-        ctx.setLineDash([2, 2]);
-        ctx.lineWidth = 1;
+        
+        // Draw vertical line
+        ctx.strokeStyle = "#f59e0b"; // Vibrant Orange
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(tagX, 10);
-        ctx.lineTo(tagX, height - 10);
+        ctx.moveTo(tagX, 0);
+        ctx.lineTo(tagX, height);
         ctx.stroke();
+
+        // Draw label with background
+        const label = tag.label;
+        ctx.font = "bold 10px Inter, system-ui, sans-serif";
+        const textWidth = ctx.measureText(label).width;
+        
+        // Label background
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath();
+        ctx.roundRect(tagX - (textWidth/2 + 4), 5, textWidth + 8, 14, 4);
+        ctx.fill();
+
+        // Label text
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.fillText(label, tagX, 15);
+
+        // Indicator dot at bottom
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath();
+        ctx.arc(tagX, height - 5, 3, 0, 2 * Math.PI);
+        ctx.fill();
       });
 
       ctx.strokeStyle = "#ef4444";
