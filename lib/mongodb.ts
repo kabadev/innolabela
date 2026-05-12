@@ -1,75 +1,64 @@
 import mongoose from "mongoose";
 
-// Cache the MongoDB connection
-let isConnected = false;
+// Set global configuration
+mongoose.set("bufferCommands", true);
+
+const MONGO_URL = process.env.MONGO_URL;
+
+if (!MONGO_URL) {
+  throw new Error("Please define the MONGO_URL environment variable inside .env");
+}
+
+// Log masked URL to verify env loading without leaking secrets
+console.log(`[DB] Using MONGO_URL: ${MONGO_URL.substring(0, 20)}...`);
+
+/**
+ * Global is used here to maintain a cached connection across hot reloads
+ * in development. This prevents connections growing exponentially
+ * during API Route usage.
+ */
+let cached = (global as any).mongoose;
+
+if (!cached) {
+  cached = (global as any).mongoose = { conn: null, promise: null };
+}
 
 export async function connectDB() {
-  // If already connected, return the existing connection
-  if (isConnected) {
-    console.log("Using existing MongoDB connection");
-    return;
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: true, // Set to true to allow Mongoose to queue commands while connecting
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      family: 4,
+    };
+
+    console.log("Creating new MongoDB connection promise...");
+    cached.promise = mongoose.connect(MONGO_URL!, opts).then((mongoose) => {
+      console.log("MongoDB connected successfully");
+      return mongoose;
+    });
   }
 
   try {
-    // Connection options
-    const options = {
-      bufferCommands: false,
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-      family: 4, // Use IPv4, skip trying IPv6
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      connectTimeoutMS: 30000, // Give up initial connection after 30 seconds
-      retryWrites: true,
-      retryReads: true,
-    };
-
-    // Connect with options
-    await mongoose.connect(
-      process.env.MONGO_URL ??
-        (() => {
-          throw new Error("MONGO_URL is not defined in environment variables");
-        })(),
-      options
-    );
-
-    const connection = mongoose.connection;
-
-    connection.on("connected", () => {
-      isConnected = true;
-      console.log("MongoDB connected successfully");
-    });
-
-    connection.on("error", (err) => {
-      console.log("MongoDB connection error: " + err);
-      // Don't exit the process, just log the error
-      isConnected = false;
-    });
-
-    connection.on("disconnected", () => {
-      console.log("MongoDB disconnected");
-      isConnected = false;
-    });
-
-    // Handle process termination
-    process.on("SIGINT", async () => {
-      await mongoose.connection.close();
-      console.log("MongoDB connection closed due to app termination");
-      process.exit(0);
-    });
-
-    return connection;
-  } catch (error) {
-    console.log("MongoDB connection error:", error);
-    isConnected = false;
-    // Don't exit the process, allow for retry
-    throw error;
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
+    console.error("MongoDB connection error:", e);
+    throw e;
   }
+
+  return cached.conn;
 }
 
 export async function disconnect() {
   if (mongoose.connection.readyState === 1) {
     await mongoose.connection.close();
-    isConnected = false;
-    console.log("MongoDB disconnected");
+    cached.conn = null;
+    cached.promise = null;
+    console.log("MongoDB disconnected manually");
   }
 }

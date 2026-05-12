@@ -153,7 +153,8 @@ export function SimpleAudioPlayer({
 
     const generateWaveform = async () => {
       try {
-        const proxyUrl = `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`;
+        // const proxyUrl = `https://innolabela.vercel.app/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`;
+        const proxyUrl = `/api/proxy-audio?url=${encodeURIComponent(audioFile.url)}`;
         const response = await fetch(proxyUrl);
         
         if (!response.ok) {
