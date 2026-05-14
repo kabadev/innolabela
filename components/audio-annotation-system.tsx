@@ -10,6 +10,8 @@ export interface AudioFile {
   url: string;
   name: string;
   duration: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AudioAnnotations {
@@ -29,6 +31,7 @@ export interface AudioGroup {
   id: string;
   name: string;
   dateAdded: Date;
+  assigned?: any;
   audioFiles: AudioFileWithSegments[];
 }
 

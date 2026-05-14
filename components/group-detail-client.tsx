@@ -12,7 +12,8 @@ import type {
 } from "./audio-annotation-system";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Music, Trash2, Upload, CheckCircle2, ArrowLeft, Download, Wand2, FileJson, FileText, FileCode, Search } from "lucide-react";
+import { Music, Trash2, Upload, CheckCircle2, ArrowLeft, Download, Wand2, FileJson, FileText, FileCode, Search, Archive, Loader2 } from "lucide-react";
+import JSZip from "jszip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +57,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
+  const [isExportingZip, setIsExportingZip] = useState(false);
 
   // Read selected audio from URL on mount and when URL changes
   useEffect(() => {
@@ -261,11 +263,19 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
   // ─── Export Helpers ───────────────────────────────────────────────────────
   const exportToJSON = () => {
-    const data = group.audioFiles.map(f => ({
-      name: f.name,
-      duration: f.duration,
-      annotations: f.annotations
-    }));
+    const data = {
+      groupName: group.name,
+      groupId: group.id,
+      assignedTo: group.assigned,
+      exportedAt: new Date().toISOString(),
+      files: group.audioFiles.map(f => ({
+        name: f.name,
+        duration: f.duration,
+        createdAt: f.createdAt,
+        updatedAt: f.updatedAt,
+        annotations: f.annotations
+      }))
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -275,14 +285,17 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const exportToCSV = () => {
-    const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript"];
+    const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript", "Speaker Tags", "Created At", "Updated At"];
     const rows = group.audioFiles.map(f => [
       f.name,
       f.duration,
       f.annotations?.category || "",
       f.annotations?.status || "",
       `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`
+      `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
+      `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
+      f.createdAt || "",
+      f.updatedAt || ""
     ]);
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: "text/csv" });
@@ -310,6 +323,81 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
     link.href = url;
     link.download = `${group.name}_annotations.srt`;
     link.click();
+  };
+
+  const exportToZip = async () => {
+    if (isExportingZip) return;
+    setIsExportingZip(true);
+    const toastId = toast.loading(`Preparing offline dataset for ${group.name}...`);
+
+    try {
+      const zip = new JSZip();
+      const audioFolder = zip.folder("audios");
+      
+      // 1. Add JSON data
+      const jsonData = {
+        groupName: group.name,
+        groupId: group.id,
+        assignedTo: group.assigned,
+        exportedAt: new Date().toISOString(),
+        files: group.audioFiles.map(f => ({
+          name: f.name,
+          duration: f.duration,
+          createdAt: f.createdAt,
+          updatedAt: f.updatedAt,
+          annotations: f.annotations,
+          localPath: `audios/${f.name}`
+        }))
+      };
+      zip.file("dataset.json", JSON.stringify(jsonData, null, 2));
+
+      // 2. Add CSV data
+      const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript", "Speaker Tags", "Created At", "Updated At", "Local Path"];
+      const rows = group.audioFiles.map(f => [
+        f.name,
+        f.duration,
+        f.annotations?.category || "",
+        f.annotations?.status || "",
+        `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
+        f.createdAt || "",
+        f.updatedAt || "",
+        `audios/${f.name}`
+      ]);
+      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      zip.file("dataset.csv", csvContent);
+
+      // 3. Add Audio files
+      console.log(`Starting to download ${group.audioFiles.length} audio files...`);
+      const downloadPromises = group.audioFiles.map(async (f) => {
+        try {
+          const response = await fetch(f.url);
+          if (!response.ok) throw new Error(`Failed to fetch ${f.name}`);
+          const blob = await response.blob();
+          audioFolder?.file(f.name, blob);
+        } catch (err) {
+          console.error(`Error downloading ${f.name}:`, err);
+        }
+      });
+
+      await Promise.all(downloadPromises);
+
+      // 4. Generate and download zip
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${group.name}_offline_dataset.zip`;
+      link.click();
+      
+      toast.success("Offline dataset downloaded successfully", { id: toastId });
+    } catch (error) {
+      console.error("Zip export error:", error);
+      toast.error("Failed to generate offline dataset", { id: toastId });
+    } finally {
+      setIsExportingZip(false);
+    }
   };
 
   // ─── Batch AI Processing ──────────────────────────────────────────────────
@@ -409,6 +497,14 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={exportToSRT}>
                     <FileCode className="w-4 h-4 mr-2" /> SRT (Subtitles)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportToZip} disabled={isExportingZip}>
+                    {isExportingZip ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Archive className="w-4 h-4 mr-2" />
+                    )}
+                    ZIP (Offline Dataset)
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -15,12 +15,15 @@ export interface AudioFileData {
   duration: number;
   groupId: string;
   annotations?: AudioAnnotations;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AudioGroupData {
   id: string;
   name: string;
   dateAdded: Date;
+  assigned?: any;
   audioFiles: AudioFileData[];
 }
 
@@ -38,6 +41,8 @@ function serializeGroup(group: any, audioFiles: any[]): AudioGroupData {
         duration: file.duration,
         groupId: file.groupId,
         annotations: file.annotations,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
       })),
     })
   );

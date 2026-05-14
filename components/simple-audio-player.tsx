@@ -654,152 +654,278 @@ export function SimpleAudioPlayer({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 lg:p-6 custom-scrollbar">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 pb-20">
+      <div className="flex-1 overflow-y-auto  custom-scrollbar">
+        <div className="space-y-4  ">
           
-          {/* Left Side: Audio Player & Waveform */}
-          <div className="lg:col-span-5 space-y-6">
-            <Card className="border-none p-2 dark:shadow-none bg-white dark:bg-slate-900 overflow-hidden">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                    <Music className="w-3.5 h-3.5" /> Waveform
-                  </CardTitle>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-6 w-6"><Info className="w-3.5 h-3.5 text-muted-foreground" /></Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p className="text-xs">Drag to select a loop region. Click to seek.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-6 p-1">
+          {/* Top Section: Advanced Audio Player */}
+          <div className="space-y-6">
+            <Card className="border-none p-0 gap-2 rounded-none bg-white dark:bg-slate-900 overflow-hidden">
+              {/* <CardHeader className=" px-6 py-0">
+                <CardTitle className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                  Waveform
+                </CardTitle>
+              </CardHeader> */}
+              <CardContent className="space-y-2 px-0 pb-6">
+                {/* Waveform Canvas */}
                 <div className="relative group/wave">
-                  <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-100/5 rounded-xl -m-2 blur-xl opacity-0 group-hover/wave:opacity-100 transition-opacity" />
                   <canvas
                     ref={waveformRef}
-                    width={800}
-                    height={180}
-                    className="w-full bg-slate-800 h-40 lg:h-44 relative z-10 cursor-crosshair rounded-xl"
+                    width={1200}
+                    height={160}
+                    className="w-full bg-slate-800 dark:bg-slate-800/50 h-32 lg:h-40 relative z-10 cursor-crosshair rounded-xls border border-slate-100 dark:border-slate-800"
                     onMouseDown={handleWaveformMouseDown}
                     onMouseMove={handleWaveformMouseMove}
                     onMouseUp={handleWaveformMouseUp}
                   />
                   {waveformData.length === 0 && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-xl z-20">
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100/50 dark:bg-slate-800/50 rounded-xl z-20">
                       <div className="flex flex-col items-center gap-2">
-                        <RotateCcw className="w-6 h-6 animate-spin text-indigo-500" />
-                        <span className="text-xs font-medium text-muted-foreground">Rendering…</span>
+                        <RotateCcw className="w-5 h-5 animate-spin text-indigo-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Rendering Waveform...</span>
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div className="flex flex-col gap-6">
-                  <div className="flex items-center justify-center gap-6">
-                    <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-indigo-600" onClick={() => seekRelative(-5)}>
-                      <SkipBack className="w-6 h-6" />
+
+                <div className="space-y-4 px-4">
+                  <div className="flex items-center justify-between max-md:flex-wrap">
+     {/* Modern Playback Control Bar */}
+                <div className=" p-4 flex items-center gap-6">
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-500" onClick={() => seekRelative(-5)}>
+                      <SkipBack className="w-5 h-5" />
                     </Button>
                     <Button 
                       size="icon" 
-                      className="h-14 w-14 rounded-full bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-none"
+                      className="h-14 w-14 rounded-full bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 dark:shadow-none transition-transform hover:scale-105 active:scale-95"
                       onClick={togglePlayPause}
                     >
-                      {isPlaying ? <Pause className="w-7 h-7 fill-current" /> : <Play className="w-7 h-7 fill-current ml-1" />}
+                      {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-indigo-600" onClick={() => seekRelative(5)}>
-                      <SkipForward className="w-6 h-6" />
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-500" onClick={() => seekRelative(5)}>
+                      <SkipForward className="w-5 h-5" />
                     </Button>
                   </div>
-                  <span className="text-[18px] self-center text-muted-foreground font-mono">{formatTime(currentTime)} / {formatTime(duration)}</span>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
-                      <Gauge className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <Select value={playbackRate.toString()} onValueChange={(v) => setPlaybackRate(parseFloat(v))}>
-                        <SelectTrigger className="h-8 border-none bg-transparent focus:ring-0 text-xs font-bold">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                            <SelectItem key={rate} value={rate.toString()}>{rate}x</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="flex-1 flex items-center gap-4">
+                    <span className="text-[11px] font-bold font-mono text-slate-500 min-w-[45px] text-right">
+                      {Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, "0")}
+                    </span>/
+                    {/* <Slider
+                      value={[currentTime]}
+                      max={duration || 100}
+                      step={0.01}
+                      onValueChange={([v]) => { if (audioRef.current) audioRef.current.currentTime = v; }}
+                      className="flex-1"
+                    /> */}
+                    <span className="text-[11px] font-bold font-mono text-slate-500 min-w-[45px]">
+                      {Math.floor(duration / 60)}:{(Math.floor(duration % 60)).toString().padStart(2, "0")}
+                    </span>
+                  </div>
 
-                    <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg group/volume">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 p-0 shrink-0" onClick={() => setIsMuted(!isMuted)}>
-                        {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  <div className="flex items-center gap-3">
+                    <Select value={playbackRate.toString()} onValueChange={(v) => setPlaybackRate(parseFloat(v))}>
+                      <SelectTrigger className="h-9 w-[70px] border-slate-200 bg-white dark:bg-slate-800 text-[11px] font-bold rounded-xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl">
+                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                          <SelectItem key={rate} value={rate.toString()} className="text-xs">{rate}x</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Button 
+                      variant={isLooping ? "default" : "outline"} 
+                      size="sm" 
+                      className={cn(
+                        "h-9 px-4 text-[11px] font-bold rounded-xl",
+                        isLooping ? "bg-indigo-600" : "border-slate-200 bg-white dark:bg-slate-800"
+                      )}
+                      onClick={toggleLoop}
+                      disabled={loopStart === null}
+                    >
+                      Loop
+                    </Button>
+                     {/* Loop Indicator Overlay (if active) */}
+            {loopStart !== null && loopEnd !== null && (
+              <div className="flex items-center gap-3 px-6 py-2 bg-indigo-50/50 border border-indigo-100 rounded-xl animate-in fade-in slide-in-from-top-1">
+                <RotateCcw className={cn("w-3.5 h-3.5 text-indigo-500", isLooping && "animate-spin-slow")} />
+                {/* <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">
+                  {formatTime(Math.min(loopStart, loopEnd))} — {formatTime(Math.max(loopStart, loopEnd))}
+                </span> */}
+                <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto text-indigo-400 hover:text-indigo-600" onClick={clearLoop}>
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
+                  </div>
+                </div>
+                    <div className="flex gap-1.5">
+                      {["Speaker A", "Speaker B", "Interviewer"].map(label => (
+                        <Button 
+                          key={label} 
+                          variant="outline" 
+                          size="xs" 
+                          className="h-7 px-3 text-[10px] font-bold rounded-full border-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                          onClick={() => addSpeakerTag(label)}
+                        >
+                          + {label}
+                        </Button>
+                      ))}
+
+                      <div className="flex gap-2">
+                      <Input
+                        placeholder="Add custom speaker label…"
+                        className="h-9 bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl text-xs px-4"
+                        value={customSpeakerLabel}
+                        onChange={(e) => setCustomSpeakerLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && customSpeakerLabel.trim()) {
+                            addSpeakerTag(customSpeakerLabel);
+                            setCustomSpeakerLabel("");
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-9 rounded-xl px-4"
+                        onClick={() => {
+                          if (customSpeakerLabel.trim()) {
+                            addSpeakerTag(customSpeakerLabel);
+                            setCustomSpeakerLabel("");
+                          }
+                        }}
+                      >
+                        Add
                       </Button>
-                      <Slider
-                        value={[isMuted ? 0 : volume * 100]}
-                        max={100}
-                        step={1}
-                        onValueChange={([v]) => { setVolume(v / 100); if (v > 0) setIsMuted(false); }}
-                        className="flex-1"
+                    </div>
+                    </div>
+                  </div>
+
+                  
+                </div>
+
+                {/* Speaker Tags Row - Directly below waveform */}
+                {/* <div className="flex flex-wrap gap-2 min-h-[32px]">
+                  {speakerTags.map((tag, i) => (
+                    <Badge 
+                      key={i} 
+                      variant="secondary" 
+                      className="gap-2 px-3 py-1.5 text-[11px] font-bold rounded-lg bg-indigo-50 text-indigo-700 border-none hover:bg-indigo-100 transition-all cursor-pointer"
+                      onClick={() => { if (audioRef.current) audioRef.current.currentTime = tag.time; }}
+                    >
+                      {tag.label}
+                    </Badge>
+                  ))}
+                  {speakerTags.length === 0 && (
+                    <p className="text-[10px] text-slate-400 italic py-1">No speaker tags added. Position playhead and use the panel below.</p>
+                  )}
+
+
+                </div> */}
+
+
+                <div className="space-y-3 px-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold flex items-center gap-2">
+                        Transcript (Krio)
+                      </Label>
+                      <Button 
+                        size="xs" 
+                        variant="secondary" 
+                        className="h-8 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-100 dark:border-indigo-800 rounded-lg gap-2"
+                        onClick={handleTranscribe}
+                        disabled={isLoading}
+                      >
+                        <Sparkles className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
+                        {isLoading ? "Analyzing..." : "AI Auto-Transcribe"}
+                      </Button>
+                    </div>
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-indigo-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
+                      <Textarea
+                        value={transcriptKrio}
+                        placeholder="Listen and type the Krio transcription here…"
+                        onChange={(e) => { setTranscriptKrio(e.target.value); setHasUnsavedChanges(true); }}
+                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
                       />
                     </div>
                   </div>
 
-                  {(loopStart !== null && loopEnd !== null) && (
-                    <div className="flex items-center gap-2 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800/30 animate-in fade-in slide-in-from-top-2">
-                      <RotateCcw className={cn("w-4 h-4 text-indigo-600", isLooping && "animate-spin-slow")} />
-                      <div className="flex-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-400 font-mono">
-                        {formatTime(Math.min(loopStart, loopEnd))} — {formatTime(Math.max(loopStart, loopEnd))}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button 
-                          variant={isLooping ? "default" : "outline"} 
-                          size="xs" 
-                          className="h-7 text-[10px] font-bold px-3 rounded-lg"
-                          onClick={toggleLoop}
-                        >
-                          {isLooping ? "Looping" : "Activate"}
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-indigo-600" onClick={clearLoop}>
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
+                   <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-slate-50/50 dark:bg-slate-800/20 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                      {speakerTags.length === 0 ? (
+                        <div className="w-full text-center py-1">
+                          <p className="text-[10px] text-muted-foreground italic flex items-center justify-center gap-2">
+                            <Info className="w-3 h-3" /> No speaker tags yet. Position the playhead and click a label above.
+                          </p>
+                        </div>
+                      ) : (
+                        speakerTags.map((tag, i) => (
+                          <Badge 
+                            key={i} 
+                            variant="secondary" 
+                            className="gap-2 pl-1 pr-1.5 py-1 text-[10px] rounded-lg bg-white dark:bg-slate-800 border shadow-sm group/tag transition-all hover:border-indigo-300"
+                          >
+                            <span 
+                              className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-mono font-bold cursor-pointer hover:bg-indigo-600 hover:text-white transition-colors"
+                              onClick={() => { if (audioRef.current) audioRef.current.currentTime = tag.time; }}
+                            >
+                              {formatTime(tag.time)}
+                            </span>
+                            <span className="font-semibold">{tag.label}</span>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-4 w-4 p-0 opacity-0 group-hover/tag:opacity-100 transition-opacity hover:text-red-500"
+                              onClick={() => setSpeakerTags(prev => prev.filter((_, idx) => idx !== i))}
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </Badge>
+                        ))
+                      )}
                     </div>
-                  )}
-                </div>
+
+                     {/* English Transcript Section */}
+                  <div className="space-y-3 px-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold flex items-center gap-2">
+                        Transcript (English)
+                      </Label>
+                      <Button 
+                        size="xs" 
+                        variant="secondary" 
+                        className="h-8 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-100 dark:border-purple-800 rounded-lg gap-2"
+                        onClick={handleTranslate}
+                        disabled={isLoading || !transcriptKrio}
+                      >
+                        <Languages className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
+                        {isLoading ? "Translating..." : "AI Auto-Translate"}
+                      </Button>
+                    </div>
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-purple-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
+                      <Textarea
+                        value={transcriptEnglish}
+                        placeholder="English translation will appear here or can be manually entered…"
+                        onChange={(e) => { setTranscriptEnglish(e.target.value); setHasUnsavedChanges(true); }}
+                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-purple-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
+                      />
+                    </div>
+                  </div>
+
+               
               </CardContent>
             </Card>
 
-            {/* Keyboard Shortcuts Card */}
-            <Card className="border-none bg-slate-100/50 dark:bg-slate-900/30">
-              <CardHeader className="py-3">
-                <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                  <Keyboard className="w-3.5 h-3.5" /> Shortcuts
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-y-2 gap-x-4 pb-4">
-                {[
-                  { k: "Space", d: "Play/Pause" },
-                  { k: "← / →", d: "Seek 1s" },
-                  { k: "Shift + ← / →", d: "Seek 5s" },
-                  { k: "L", d: "Toggle Loop" },
-                  { k: "C", d: "Clear Loop" },
-                  { k: "N / P", d: "Next/Prev File" },
-                  { k: "Ctrl + S", d: "Save" },
-                ].map(({ k, d }) => (
-                  <div key={k} className="flex items-center justify-between text-[10px]">
-                    <span className="text-muted-foreground font-medium">{d}</span>
-                    <kbd className="px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 font-mono shadow-sm">{k}</kbd>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+           
           </div>
 
-          {/* Right Side: Annotations & Speaker Tags */}
-          <div className="lg:col-span-7 space-y-6">
-            <Card className="border-none shadow-xl shadow-slate-200/50 dark:shadow-none bg-white dark:bg-slate-900">
+          {/* Bottom Section: Annotation Workspace */}
+          <div className="grid grid-cols-1 gap-8">
+            <Card className="border-none rounded-none">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
@@ -847,151 +973,7 @@ export function SimpleAudioPlayer({
                   </div>
                 </div>
 
-                <Separator className="bg-slate-100 dark:bg-slate-800" />
-
-                <div className="space-y-6">
-                  {/* Krio Transcript Section */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-bold flex items-center gap-2">
-                        Transcript (Krio)
-                      </Label>
-                      <Button 
-                        size="xs" 
-                        variant="secondary" 
-                        className="h-8 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-100 dark:border-indigo-800 rounded-lg gap-2"
-                        onClick={handleTranscribe}
-                        disabled={isLoading}
-                      >
-                        <Sparkles className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
-                        {isLoading ? "Analyzing..." : "AI Auto-Transcribe"}
-                      </Button>
-                    </div>
-                    <div className="relative group">
-                      <div className="absolute inset-0 bg-indigo-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
-                      <Textarea
-                        value={transcriptKrio}
-                        placeholder="Listen and type the Krio transcription here…"
-                        onChange={(e) => { setTranscriptKrio(e.target.value); setHasUnsavedChanges(true); }}
-                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
-                      />
-                    </div>
-                  </div>
-
-                  {/* English Transcript Section */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-bold flex items-center gap-2">
-                        Transcript (English)
-                      </Label>
-                      <Button 
-                        size="xs" 
-                        variant="secondary" 
-                        className="h-8 bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-100 dark:border-purple-800 rounded-lg gap-2"
-                        onClick={handleTranslate}
-                        disabled={isLoading || !transcriptKrio}
-                      >
-                        <Languages className={cn("w-3.5 h-3.5", isLoading && "animate-pulse")} />
-                        {isLoading ? "Translating..." : "AI Auto-Translate"}
-                      </Button>
-                    </div>
-                    <div className="relative group">
-                      <div className="absolute inset-0 bg-purple-600/5 rounded-2xl blur-lg opacity-0 group-focus-within:opacity-100 transition-opacity" />
-                      <Textarea
-                        value={transcriptEnglish}
-                        placeholder="English translation will appear here or can be manually entered…"
-                        onChange={(e) => { setTranscriptEnglish(e.target.value); setHasUnsavedChanges(true); }}
-                        className="min-h-[140px] rounded-2xl bg-slate-50 dark:bg-slate-800/30 border-none focus-visible:ring-2 focus-visible:ring-purple-500/50 resize-none p-4 text-sm leading-relaxed relative z-10"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <Separator className="bg-slate-100 dark:bg-slate-800" />
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                      <UserPlus className="w-3.5 h-3.5" /> Speaker Tags
-                    </Label>
-                    <div className="flex gap-1.5">
-                      {["Speaker A", "Speaker B", "Interviewer"].map(label => (
-                        <Button 
-                          key={label} 
-                          variant="outline" 
-                          size="xs" 
-                          className="h-7 px-3 text-[10px] font-bold rounded-full border-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                          onClick={() => addSpeakerTag(label)}
-                        >
-                          + {label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Add custom speaker label…"
-                        className="h-9 bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl text-xs px-4"
-                        value={customSpeakerLabel}
-                        onChange={(e) => setCustomSpeakerLabel(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && customSpeakerLabel.trim()) {
-                            addSpeakerTag(customSpeakerLabel);
-                            setCustomSpeakerLabel("");
-                          }
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        className="h-9 rounded-xl px-4"
-                        onClick={() => {
-                          if (customSpeakerLabel.trim()) {
-                            addSpeakerTag(customSpeakerLabel);
-                            setCustomSpeakerLabel("");
-                          }
-                        }}
-                      >
-                        Add
-                      </Button>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2 min-h-[40px] p-3 bg-slate-50/50 dark:bg-slate-800/20 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
-                      {speakerTags.length === 0 ? (
-                        <div className="w-full text-center py-1">
-                          <p className="text-[10px] text-muted-foreground italic flex items-center justify-center gap-2">
-                            <Info className="w-3 h-3" /> No speaker tags yet. Position the playhead and click a label above.
-                          </p>
-                        </div>
-                      ) : (
-                        speakerTags.map((tag, i) => (
-                          <Badge 
-                            key={i} 
-                            variant="secondary" 
-                            className="gap-2 pl-1 pr-1.5 py-1 text-[10px] rounded-lg bg-white dark:bg-slate-800 border shadow-sm group/tag transition-all hover:border-indigo-300"
-                          >
-                            <span 
-                              className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-mono font-bold cursor-pointer hover:bg-indigo-600 hover:text-white transition-colors"
-                              onClick={() => { if (audioRef.current) audioRef.current.currentTime = tag.time; }}
-                            >
-                              {formatTime(tag.time)}
-                            </span>
-                            <span className="font-semibold">{tag.label}</span>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-4 w-4 p-0 opacity-0 group-hover/tag:opacity-100 transition-opacity hover:text-red-500"
-                              onClick={() => setSpeakerTags(prev => prev.filter((_, idx) => idx !== i))}
-                            >
-                              <X className="w-3 h-3" />
-                            </Button>
-                          </Badge>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
+              
               </CardContent>
               {hasUnsavedChanges && (
                 <CardFooter className="py-3 bg-amber-50 dark:bg-amber-900/10 border-t border-amber-100 dark:border-amber-900/30 flex items-center gap-3">
@@ -999,6 +981,31 @@ export function SimpleAudioPlayer({
                   <p className="text-[10px] font-bold text-amber-800 dark:text-amber-400 uppercase tracking-widest">Unsaved Changes Detected</p>
                 </CardFooter>
               )}
+            </Card>
+
+            {/* Keyboard Shortcuts Card */}
+            <Card className="border-none bg-slate-100/50 dark:bg-slate-900/30">
+              <CardHeader className="py-3">
+                <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <Keyboard className="w-3.5 h-3.5" /> Shortcuts
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-2 gap-y-2 gap-x-4 pb-4">
+                {[
+                  { k: "Space", d: "Play/Pause" },
+                  { k: "← / →", d: "Seek 1s" },
+                  { k: "Shift + ← / →", d: "Seek 5s" },
+                  { k: "L", d: "Toggle Loop" },
+                  { k: "C", d: "Clear Loop" },
+                  { k: "N / P", d: "Next/Prev File" },
+                  { k: "Ctrl + S", d: "Save" },
+                ].map(({ k, d }) => (
+                  <div key={k} className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground font-medium">{d}</span>
+                    <kbd className="px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 font-mono shadow-sm">{k}</kbd>
+                  </div>
+                ))}
+              </CardContent>
             </Card>
           </div>
         </div>

@@ -8,12 +8,12 @@ export default async function GroupsPage() {
 
   return (
     <div className="h-screen flex flex-col ">
-      <div className="text-center p-4">
+      {/* <div className="text-center p-4">
         <h1 className="text-3xl font-bold">
           Welcome{" "}
           {user ? `${user?.firstName} ${user?.lastName}` : "Civil Plus Team"} !
         </h1>
-      </div>
+      </div> */}
       <div className="flex-1 overflow-hidden">
         <GroupsListClient initialGroups={groups} />
       </div>

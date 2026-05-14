@@ -9,9 +9,9 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { Toaster } from "sonner";
 import { shadcn } from "@clerk/ui/themes";
 export const metadata: Metadata = {
-  title: "CivilPlus Audio Labeler App",
-  description: "Created with CivilPlus Audio Labeler",
-  generator: "CivilPlus",
+  title: "Civic Pulse Audio Labeler",
+  description: "Created with Civic Pulse Audio Labeler",
+  generator: "Civic Pulse", 
 };
 
 export default function RootLayout({
