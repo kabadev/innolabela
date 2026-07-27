@@ -94,7 +94,7 @@ export async function createGroup(
     audioFilesData.map((file) => ({
       name: file.name,
       url: file.url,
-      duration: file.duration,
+      duration: file.duration || 20,
       groupId: newGroup._id,
       annotations: file.annotations || {
         transcriptEnglish: "",
@@ -179,7 +179,7 @@ export async function addAudioToGroup(
   await AudioFile.create({
     name: audioFileData.name,
     url: audioFileData.url,
-    duration: audioFileData.duration,
+    duration: audioFileData.duration || 20,
     groupId: group._id,
     annotations: audioFileData.annotations || {
       transcriptEnglish: "",

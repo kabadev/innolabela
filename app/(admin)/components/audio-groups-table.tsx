@@ -103,9 +103,17 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
 
   const exportToJSON = () => {
     const exportData = audioFiles.map((file) => ({
-      audio: file.url,
-      krio: file.annotations.transcriptKrio,
-      english: file.annotations.transcriptEnglish,
+      id: file.id || (file as any)._id,
+      name: file.name,
+      url: file.url,
+      duration: file.duration,
+      groupId: file.groupId,
+      category: file.annotations?.category || "",
+      status: file.annotations?.status || "pending",
+      transcriptKrio: file.annotations?.transcriptKrio || "",
+      transcriptEnglish: file.annotations?.transcriptEnglish || "",
+      speakerTags: file.annotations?.speakerTags || [],
+      annotations: file.annotations || {}
     }));
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {
@@ -120,23 +128,33 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
   };
 
   const exportToCSV = () => {
-    const exportData = audioFiles.map((file) => ({
-      audio: file.url,
-      krio: file.annotations.transcriptKrio,
-      english: file.annotations.transcriptEnglish,
-    }));
+    const headers = [
+      "ID",
+      "Name",
+      "Audio URL",
+      "Duration",
+      "Group ID",
+      "Category",
+      "Status",
+      "Krio Transcript",
+      "English Transcript",
+      "Speaker Tags"
+    ];
 
-    const headers = ["Audio URL", "Krio", "English"];
-    const csvContent = [
-      headers.join(","),
-      ...exportData.map((row) =>
-        [
-          `"${row.audio}"`,
-          `"${row.krio.replace(/"/g, '""')}"`,
-          `"${row.english.replace(/"/g, '""')}"`,
-        ].join(",")
-      ),
-    ].join("\n");
+    const rows = audioFiles.map((file) => [
+      `"${file.id || (file as any)._id || ""}"`,
+      `"${(file.name || "").replace(/"/g, '""')}"`,
+      `"${(file.url || "").replace(/"/g, '""')}"`,
+      file.duration || 0,
+      `"${file.groupId || ""}"`,
+      `"${(file.annotations?.category || "").replace(/"/g, '""')}"`,
+      `"${(file.annotations?.status || "").replace(/"/g, '""')}"`,
+      `"${(file.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
+      `"${(file.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
+      `"${(file.annotations?.speakerTags?.map((s) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -166,11 +184,7 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
       const audioFolder = zip.folder("audio");
 
       // Prepare data for JSON and CSV
-      const exportData: Array<{
-        audio: string;
-        krio: string;
-        english: string;
-      }> = [];
+      const exportData: Array<any> = [];
 
       // Download and add each audio file to the zip
       for (let i = 0; i < allFiles.length; i++) {
@@ -192,11 +206,20 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
           // Add audio file to audio folder
           audioFolder?.file(filename, audioBlob);
 
-          // Add to export data with relative path
+          // Add to export data with all fields
           exportData.push({
-            audio: `/audio/${filename}`,
-            krio: file.annotations.transcriptKrio || "",
-            english: file.annotations.transcriptEnglish || "",
+            id: file.id || (file as any)._id,
+            name: file.name,
+            originalUrl: file.url,
+            localPath: `/audio/${filename}`,
+            duration: file.duration,
+            groupId: file.groupId,
+            category: file.annotations?.category || "",
+            status: file.annotations?.status || "pending",
+            transcriptKrio: file.annotations?.transcriptKrio || "",
+            transcriptEnglish: file.annotations?.transcriptEnglish || "",
+            speakerTags: file.annotations?.speakerTags || [],
+            annotations: file.annotations || {}
           });
         } catch (error) {
           console.error(
@@ -211,17 +234,34 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
       zip.file("data.json", jsonContent);
 
       // Create CSV file
-      const headers = ["Audio", "Krio", "English"];
-      const csvContent = [
-        headers.join(","),
-        ...exportData.map((row) =>
-          [
-            `"${row.audio}"`,
-            `"${row.krio.replace(/"/g, '""')}"`,
-            `"${row.english.replace(/"/g, '""')}"`,
-          ].join(",")
-        ),
-      ].join("\n");
+      const headers = [
+        "ID",
+        "Name",
+        "Original URL",
+        "Local Path",
+        "Duration",
+        "Group ID",
+        "Category",
+        "Status",
+        "Krio Transcript",
+        "English Transcript",
+        "Speaker Tags"
+      ];
+      const csvRows = exportData.map((row) => [
+        `"${row.id || ""}"`,
+        `"${(row.name || "").replace(/"/g, '""')}"`,
+        `"${(row.originalUrl || "").replace(/"/g, '""')}"`,
+        `"${(row.localPath || "").replace(/"/g, '""')}"`,
+        row.duration || 0,
+        `"${row.groupId || ""}"`,
+        `"${(row.category || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "").replace(/"/g, '""')}"`,
+        `"${(row.transcriptKrio || "").replace(/"/g, '""')}"`,
+        `"${(row.transcriptEnglish || "").replace(/"/g, '""')}"`,
+        `"${(row.speakerTags?.map((s: any) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
+      ]);
+
+      const csvContent = [headers.join(","), ...csvRows.map((r) => r.join(","))].join("\n");
       zip.file("data.csv", csvContent);
 
       // Generate and download zip

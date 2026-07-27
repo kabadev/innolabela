@@ -36,7 +36,7 @@ import { cn, hasPermission, UserRole } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface GroupDetailClientProps {
-  initialGroup: AudioGroup;
+  initialGroup: AudioGroup | null;
   initialGlossary?: any[];
 }
 
@@ -46,7 +46,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   const isAdmin = user && hasPermission(user.publicMetadata?.role as UserRole, ["Admin", "Project Lead"]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [group, setGroup] = useState<AudioGroup>(initialGroup);
+  const [group, setGroup] = useState<AudioGroup | null>(initialGroup);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -62,7 +62,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   // Read selected audio from URL on mount and when URL changes
   useEffect(() => {
     const audioId = searchParams.get("audio");
-    if (audioId) {
+    if (audioId && group?.audioFiles) {
       const audio = group.audioFiles.find((file) => file.id === audioId);
       if (audio) {
         setSelectedAudio(audio);
@@ -70,13 +70,13 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
     } else {
       setSelectedAudio(null);
     }
-  }, [searchParams, group.audioFiles]);
+  }, [searchParams, group?.audioFiles]);
 
   // Handle browser back button
   useEffect(() => {
     const handlePopState = () => {
       const audioId = new URLSearchParams(window.location.search).get("audio");
-      if (audioId) {
+      if (audioId && group?.audioFiles) {
         const audio = group.audioFiles.find((file) => file.id === audioId);
         if (audio) {
           setSelectedAudio(audio);
@@ -88,7 +88,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [group.audioFiles]);
+  }, [group?.audioFiles]);
 
   const formatDuration = (duration: number) => {
     const minutes = Math.floor(duration / 60);
@@ -97,6 +97,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const getAnnotatedCount = () => {
+    if (!group?.audioFiles) return 0;
     return group.audioFiles.filter(
       (file) =>
         file.annotations &&
@@ -128,10 +129,11 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const audioFiles = files.filter((file) => file.type.startsWith("audio/"));
+    const currentCount = group?.audioFiles?.length || 0;
 
-    if (audioFiles.length + group.audioFiles.length > 100) {
+    if (audioFiles.length + currentCount > 100) {
       setError(
-        `Cannot add ${audioFiles.length} files. Group limit is 100 files (currently ${group.audioFiles.length})`
+        `Cannot add ${audioFiles.length} files. Group limit is 100 files (currently ${currentCount})`
       );
       return;
     }
@@ -141,41 +143,17 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const handleAddFiles = async () => {
-    if (uploadedUrls.length === 0) return;
+    if (uploadedUrls.length === 0 || !group) return;
 
     setIsAdding(true);
 
     try {
-      const audioFilesWithMetadata = await Promise.all(
-        uploadedUrls.map(async (url) => {
-          const filename = url.split("/").pop() || "audio.mp3";
-          const audio = new Audio(url);
-
-          return new Promise<AudioFile>((resolve, reject) => {
-            audio.addEventListener("loadedmetadata", () => {
-              resolve({
-                id: `audio-${Date.now()}-${Math.random()}`,
-                file: null!,
-                url,
-                name: filename,
-                duration: audio.duration,
-              });
-            });
-
-            audio.addEventListener("error", () => {
-              reject(new Error(`Failed to load audio: ${filename}`));
-            });
-
-            setTimeout(() => {
-              reject(new Error(`Timeout loading audio: ${filename}`));
-            }, 10000);
-          });
-        })
-      );
-
-      for (const audioFile of audioFilesWithMetadata) {
-        const fileWithSegments: AudioFileWithSegments = {
-          ...audioFile,
+      for (const url of uploadedUrls) {
+        const filename = url.split("/").pop() || "audio.mp3";
+        const fileWithSegments: any = {
+          name: filename,
+          url,
+          duration: 20,
           groupId: group.id,
           annotations: {
             transcriptEnglish: "",
@@ -188,7 +166,9 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
         const groupRes: any = await addAudioToGroup(group.id, fileWithSegments);
 
-        setGroup(groupRes!);
+        if (groupRes) {
+          setGroup(groupRes);
+        }
       }
 
       router.refresh();
@@ -222,17 +202,20 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const handleSaveAnnotations = async (annotations: AudioAnnotations) => {
-    if (!selectedAudio) return;
+    if (!selectedAudio || !group) return;
 
     try {
       await updateAudioAnnotations(group.id, selectedAudio.id, annotations);
 
-      setGroup((prev) => ({
-        ...prev,
-        audioFiles: prev.audioFiles.map((file) =>
-          file.id === selectedAudio.id ? { ...file, annotations } : file
-        ),
-      }));
+      setGroup((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          audioFiles: (prev.audioFiles || []).map((file) =>
+            file.id === selectedAudio.id ? { ...file, annotations } : file
+          ),
+        };
+      });
 
       setSelectedAudio((prev) => (prev ? { ...prev, annotations } : null));
     } catch (err) {
@@ -241,13 +224,17 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const handleDeleteAudio = async (audioId: string) => {
+    if (!group) return;
     try {
       await deleteAudio(group.id, audioId);
 
-      setGroup((prev) => ({
-        ...prev,
-        audioFiles: prev.audioFiles.filter((file) => file.id !== audioId),
-      }));
+      setGroup((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          audioFiles: (prev.audioFiles || []).filter((file) => file.id !== audioId),
+        };
+      });
 
       if (selectedAudio?.id === audioId) {
         handleClosePlayer();
@@ -263,17 +250,25 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
   // ─── Export Helpers ───────────────────────────────────────────────────────
   const exportToJSON = () => {
+    if (!group) return;
     const data = {
       groupName: group.name,
       groupId: group.id,
       assignedTo: group.assigned,
       exportedAt: new Date().toISOString(),
-      files: group.audioFiles.map(f => ({
+      files: (group.audioFiles || []).map(f => ({
+        id: f.id,
         name: f.name,
+        url: f.url,
         duration: f.duration,
-        createdAt: f.createdAt,
-        updatedAt: f.updatedAt,
-        annotations: f.annotations
+        groupId: f.groupId || group.id,
+        groupName: group.name,
+        category: f.annotations?.category || "",
+        status: f.annotations?.status || "pending",
+        transcriptKrio: f.annotations?.transcriptKrio || "",
+        transcriptEnglish: f.annotations?.transcriptEnglish || "",
+        speakerTags: f.annotations?.speakerTags || [],
+        annotations: f.annotations || {}
       }))
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -285,19 +280,34 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const exportToCSV = () => {
-    const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript", "Speaker Tags", "Created At", "Updated At"];
-    const rows = group.audioFiles.map(f => [
-      f.name,
-      f.duration,
-      f.annotations?.category || "",
-      f.annotations?.status || "",
+    if (!group) return;
+    const headers = [
+      "ID",
+      "Name",
+      "URL",
+      "Duration",
+      "Group ID",
+      "Group Name",
+      "Category",
+      "Status",
+      "Krio Transcript",
+      "English Transcript",
+      "Speaker Tags"
+    ];
+    const rows = (group.audioFiles || []).map(f => [
+      `"${f.id || ""}"`,
+      `"${(f.name || "").replace(/"/g, '""')}"`,
+      `"${(f.url || "").replace(/"/g, '""')}"`,
+      f.duration || 0,
+      `"${f.groupId || group.id || ""}"`,
+      `"${(group.name || "").replace(/"/g, '""')}"`,
+      `"${(f.annotations?.category || "").replace(/"/g, '""')}"`,
+      `"${(f.annotations?.status || "").replace(/"/g, '""')}"`,
       `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
       `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
-      f.createdAt || "",
-      f.updatedAt || ""
+      `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
     ]);
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+    const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -307,14 +317,14 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const exportToSRT = () => {
-    // Basic SRT generation - for each file, we create one big segment for now
-    // In a real app, we'd use speaker tags or segments
+    if (!group) return;
     let srtContent = "";
-    group.audioFiles.forEach((f, i) => {
-      if (f.annotations?.transcriptEnglish) {
+    (group.audioFiles || []).forEach((f, i) => {
+      if (f.annotations?.transcriptEnglish || f.annotations?.transcriptKrio) {
+        const text = f.annotations.transcriptEnglish || f.annotations.transcriptKrio;
         srtContent += `${i + 1}\n`;
-        srtContent += `00:00:00,000 --> ${new Date(f.duration * 1000).toISOString().substr(11, 12).replace('.', ',')}\n`;
-        srtContent += `${f.annotations.transcriptEnglish}\n\n`;
+        srtContent += `00:00:00,000 --> ${new Date((f.duration || 20) * 1000).toISOString().substr(11, 12).replace('.', ',')}\n`;
+        srtContent += `${text}\n\n`;
       }
     });
     const blob = new Blob([srtContent], { type: "text/plain" });
@@ -326,51 +336,74 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   const exportToZip = async () => {
-    if (isExportingZip) return;
+    if (isExportingZip || !group) return;
     setIsExportingZip(true);
     const toastId = toast.loading(`Preparing offline dataset for ${group.name}...`);
+    const groupAudioFiles = group.audioFiles || [];
 
     try {
       const zip = new JSZip();
       const audioFolder = zip.folder("audios");
       
-      // 1. Add JSON data
+      // 1. Add JSON data with all fields
       const jsonData = {
         groupName: group.name,
         groupId: group.id,
         assignedTo: group.assigned,
         exportedAt: new Date().toISOString(),
-        files: group.audioFiles.map(f => ({
+        files: groupAudioFiles.map(f => ({
+          id: f.id,
           name: f.name,
+          url: f.url,
           duration: f.duration,
-          createdAt: f.createdAt,
-          updatedAt: f.updatedAt,
-          annotations: f.annotations,
+          groupId: f.groupId || group.id,
+          groupName: group.name,
+          category: f.annotations?.category || "",
+          status: f.annotations?.status || "pending",
+          transcriptKrio: f.annotations?.transcriptKrio || "",
+          transcriptEnglish: f.annotations?.transcriptEnglish || "",
+          speakerTags: f.annotations?.speakerTags || [],
+          annotations: f.annotations || {},
           localPath: `audios/${f.name}`
         }))
       };
       zip.file("dataset.json", JSON.stringify(jsonData, null, 2));
 
-      // 2. Add CSV data
-      const headers = ["Name", "Duration", "Category", "Status", "Krio Transcript", "English Transcript", "Speaker Tags", "Created At", "Updated At", "Local Path"];
-      const rows = group.audioFiles.map(f => [
-        f.name,
-        f.duration,
-        f.annotations?.category || "",
-        f.annotations?.status || "",
+      // 2. Add CSV data with all fields
+      const headers = [
+        "ID",
+        "Name",
+        "URL",
+        "Duration",
+        "Group ID",
+        "Group Name",
+        "Category",
+        "Status",
+        "Krio Transcript",
+        "English Transcript",
+        "Speaker Tags",
+        "Local Path"
+      ];
+      const rows = groupAudioFiles.map(f => [
+        `"${f.id || ""}"`,
+        `"${(f.name || "").replace(/"/g, '""')}"`,
+        `"${(f.url || "").replace(/"/g, '""')}"`,
+        f.duration || 0,
+        `"${f.groupId || group.id || ""}"`,
+        `"${(group.name || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.category || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.status || "").replace(/"/g, '""')}"`,
         `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
         `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
         `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
-        f.createdAt || "",
-        f.updatedAt || "",
-        `audios/${f.name}`
+        `"audios/${f.name}"`
       ]);
-      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
       zip.file("dataset.csv", csvContent);
 
       // 3. Add Audio files
-      console.log(`Starting to download ${group.audioFiles.length} audio files...`);
-      const downloadPromises = group.audioFiles.map(async (f) => {
+      console.log(`Starting to download ${groupAudioFiles.length} audio files...`);
+      const downloadPromises = groupAudioFiles.map(async (f) => {
         try {
           const response = await fetch(f.url);
           if (!response.ok) throw new Error(`Failed to fetch ${f.name}`);
@@ -402,11 +435,12 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
   // ─── Batch AI Processing ──────────────────────────────────────────────────
   const handleBatchTranscribe = async () => {
+    if (!group) return;
     if (!confirm("This will transcribe all unannotated files in this group. Continue?")) return;
     
     setIsBatchProcessing(true);
     try {
-      const unannotatedFiles = group.audioFiles.filter(f => !f.annotations?.transcriptKrio);
+      const unannotatedFiles = (group.audioFiles || []).filter(f => !f.annotations?.transcriptKrio);
       
       for (const file of unannotatedFiles) {
         const krio = await transscribeKrioAi(file.url);
@@ -436,11 +470,21 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
     }
   };
 
-  const filteredAudioFiles = group.audioFiles.filter(f => 
+  const groupAudioFiles = group?.audioFiles || [];
+
+  const filteredAudioFiles = groupAudioFiles.filter(f => 
     f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     f.annotations?.transcriptKrio?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     f.annotations?.transcriptEnglish?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (!group) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8 text-muted-foreground">
+        <p>Audio group not found or loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className=" flex flex-col lg:flex-row">
@@ -530,7 +574,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
                 size="sm"
                 variant="outline"
                 onClick={() => setShowUploadModal(true)}
-                disabled={group.audioFiles.length >= 100}
+                disabled={groupAudioFiles.length >= 100}
                 className="w-full text-xs"
               >
                 <Upload className="w-3 h-3 mr-1" />
@@ -540,19 +584,19 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
           </div>
 
           <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-2 px-1">
-            <span className="font-medium">{group.audioFiles.length} / 100 files</span>
+            <span className="font-medium">{groupAudioFiles.length} / 100 files</span>
             <span className="font-medium text-indigo-600">{getAnnotatedCount()} annotated</span>
           </div>
           <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden shadow-inner">
             <div
               className="bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full h-full transition-all duration-500 ease-out"
-              style={{ width: `${(group.audioFiles.length / 100) * 100}%` }}
+              style={{ width: `${(groupAudioFiles.length / 100) * 100}%` }}
             />
           </div>
         </div>
 
         <div className="  overflow-y-auto">
-          {group.audioFiles.length === 0 ? (
+          {groupAudioFiles.length === 0 ? (
             <div className="h-[calc(100vh-220px)] overflow-y-auto flex items-center justify-center p-4">
               <div className="text-center text-muted-foreground">
                 <Music className="w-12 h-12 mx-auto mb-3 opacity-50" />
@@ -667,15 +711,15 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
             onSave={handleSaveAnnotations}
             onClose={handleClosePlayer}
             onNext={() => {
-              const idx = group.audioFiles.findIndex(f => f.id === selectedAudio.id);
-              if (idx < group.audioFiles.length - 1) handleAudioClick(group.audioFiles[idx + 1]);
+              const idx = groupAudioFiles.findIndex(f => f.id === selectedAudio.id);
+              if (idx >= 0 && idx < groupAudioFiles.length - 1) handleAudioClick(groupAudioFiles[idx + 1]);
             }}
             onPrev={() => {
-              const idx = group.audioFiles.findIndex(f => f.id === selectedAudio.id);
-              if (idx > 0) handleAudioClick(group.audioFiles[idx - 1]);
+              const idx = groupAudioFiles.findIndex(f => f.id === selectedAudio.id);
+              if (idx > 0) handleAudioClick(groupAudioFiles[idx - 1]);
             }}
-            hasNext={group.audioFiles.findIndex(f => f.id === selectedAudio.id) < group.audioFiles.length - 1}
-            hasPrev={group.audioFiles.findIndex(f => f.id === selectedAudio.id) > 0}
+            hasNext={groupAudioFiles.findIndex(f => f.id === selectedAudio.id) < groupAudioFiles.length - 1}
+            hasPrev={groupAudioFiles.findIndex(f => f.id === selectedAudio.id) > 0}
             initialGlossary={initialGlossary}
           />
         ) : (

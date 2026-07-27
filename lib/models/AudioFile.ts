@@ -43,7 +43,7 @@ const AudioFileSchema = new Schema<IAudioFile>(
   {
     name: { type: String, required: true },
     url: { type: String, required: true },
-    duration: { type: Number, required: true },
+    duration: { type: Number, default: 20 },
     groupId: { type: Schema.Types.ObjectId, ref: "AudioGroup", required: true },
     annotations: { type: AudioAnnotationsSchema, default: () => ({}) },
   },

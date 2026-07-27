@@ -92,49 +92,25 @@ export function GroupsListClient({
     setIsCreating(true);
 
     try {
-      const audioFilesWithMetadata = await Promise.all(
-        uploadedUrls.map(async (url) => {
-          const filename = url.split("/").pop() || "audio.mp3";
-          const audio = new Audio(url);
-
-          return new Promise<AudioFile>((resolve, reject) => {
-            audio.addEventListener("loadedmetadata", () => {
-              resolve({
-                id: `audio-${Date.now()}-${Math.random()}`,
-                file: null!,
-                url,
-                name: filename,
-                duration: audio.duration,
-              });
-            });
-
-            audio.addEventListener("error", () => {
-              reject(new Error(`Failed to load audio: ${filename}`));
-            });
-
-            setTimeout(() => {
-              reject(new Error(`Timeout loading audio: ${filename}`));
-            }, 10000);
-          });
-        })
-      );
-
-      const filesWithSegments = audioFilesWithMetadata.map((file) => ({
-        name: file.name,
-        url: file.url,
-        duration: file.duration,
-        annotations: {
-          transcriptEnglish: "",
-          transcriptKrio: "",
-          category: "",
-          status: "pending" as const,
-          speakerTags: [],
-        },
-      }));
+      const filesData = uploadedUrls.map((url) => {
+        const filename = url.split("/").pop() || "audio.mp3";
+        return {
+          name: filename,
+          url,
+          duration: 20,
+          annotations: {
+            transcriptEnglish: "",
+            transcriptKrio: "",
+            category: "",
+            status: "pending" as const,
+            speakerTags: [],
+          },
+        };
+      });
 
       const newGroup = await createGroup(
         `Group ${groups.length + 1}`,
-        filesWithSegments
+        filesData
       );
 
       setGroups((prev: any) => [...prev, newGroup]);

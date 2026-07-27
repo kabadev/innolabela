@@ -54,7 +54,7 @@ Comprehensive oversight and management tools for administrators:
 
 ### Audio Workspace
  ![Workspace](/public/screenshots/workspace.png) 
-
+ 
 ### Glossary Management
  ![Glossary](/public/screenshots/screenshoot2.png) 
 
