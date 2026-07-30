@@ -123,7 +123,8 @@ export function GroupsList({ groups, onSelectGroup, onDeleteGroup, onCreateGroup
     return [...filtered].sort((a, b) => {
       const timeA = new Date(a.dateAdded).getTime()
       const timeB = new Date(b.dateAdded).getTime()
-      return sortOrder === "newest" ? timeB - timeA : timeA - timeB
+      const nameCompare = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+      return sortOrder === "oldest" ? nameCompare || (timeA - timeB) : -nameCompare || (timeB - timeA)
     })
   }, [groups, searchQuery, sortOrder])
 

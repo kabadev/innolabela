@@ -510,7 +510,15 @@ export function SimpleAudioPlayer({
   const handleTranscribe = async () => {
     try {
       setIsLoading(true);
-      setTranscriptKrio(await transscribeKrioAi(audioFile.url));
+      const res: any = await transscribeKrioAi(audioFile.url);
+      if (typeof res === "string") {
+        setTranscriptKrio(res);
+      } else if (res) {
+        setTranscriptKrio(res.text || res.rawText || "");
+        if (res.speakerTags && res.speakerTags.length > 0) {
+          setSpeakerTags(res.speakerTags);
+        }
+      }
       setHasUnsavedChanges(true);
     } catch (err) {
       console.error("Transcription error:", err);

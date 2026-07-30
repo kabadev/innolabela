@@ -57,9 +57,9 @@ export async function getGroups(): Promise<AudioGroupData[]> {
   const groups =
     userCurrent?.publicMetadata.role === "Annotators"
       ? await AudioGroup.find({ assigned: userCurrent.id })
-          .sort({ dateAdded: -1 })
+          .sort({ dateAdded: 1 })
           .lean()
-      : await AudioGroup.find().sort({ dateAdded: -1 }).lean();
+      : await AudioGroup.find().sort({ dateAdded: 1 }).lean();
 
   const groupsWithFiles = await Promise.all(
     groups.map(async (group) => {
@@ -74,6 +74,10 @@ export async function getGroups(): Promise<AudioGroupData[]> {
         audioFiles
       );
     })
+  );
+
+  groupsWithFiles.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
   );
 
   return groupsWithFiles;

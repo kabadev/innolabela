@@ -60,7 +60,7 @@ export function GroupsListClient({
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState<string>("");
   const [isCreating, setIsCreating] = useState(false);
-  const [sortOption, setSortOption] = useState<SortOption>("newest");
+  const [sortOption, setSortOption] = useState<SortOption>("oldest");
   const [viewType, setViewType] = useState<"grid" | "list">("grid");
   const uploaderRef = useRef<{ reset: () => void }>(null);
   const [showAssignDialog, setShowAssignDialog] = useState(false);
@@ -169,16 +169,16 @@ export function GroupsListClient({
       const dateB = new Date(b.dateAdded).getTime();
 
       switch (sortOption) {
-        case "newest":
-          return dateB - dateA;
         case "oldest":
-          return dateA - dateB;
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) || (dateA - dateB);
+        case "newest":
+          return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: "base" }) || (dateB - dateA);
         case "name":
-          return a.name.localeCompare(b.name);
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
         case "files":
           return b.audioFiles.length - a.audioFiles.length;
         default:
-          return 0;
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
       }
     });
 
