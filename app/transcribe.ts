@@ -9,22 +9,42 @@ const client = new ElevenLabsClient({
   environment: "https://api.elevenlabs.io",
 });
 
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+];
+
+async function createGroqCompletion(messages: any[]) {
+  let lastError: any = null;
+  for (const model of GROQ_MODELS) {
+    try {
+      const completion = await groq.chat.completions.create({
+        messages,
+        model,
+      });
+      return completion;
+    } catch (err: any) {
+      console.warn(`Groq model ${model} failed, trying fallback:`, err?.message || err);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("All Groq AI models failed.");
+}
+
 export const categorizeAi = async (text: string): Promise<string> => {
   if (!text || !text.trim()) return "monologue";
   try {
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: "user",
-          content: `Classify the following audio transcript into EXACTLY ONE category from this list: ["conversation", "monologue", "interview", "story", "news", "music", "other"].
+    const chatCompletion = await createGroqCompletion([
+      {
+        role: "user",
+        content: `Classify the following audio transcript into EXACTLY ONE category from this list: ["conversation", "monologue", "interview", "story", "news", "music", "other"].
 Output ONLY the category keyword in lowercase with no punctuation or extra words.
 
 Transcript:
 "${text}"`,
-        },
-      ],
-      model: "openai/gpt-oss-20b",
-    });
+      },
+    ]);
     const result = chatCompletion.choices[0]?.message?.content?.trim().toLowerCase() || "monologue";
     const validCategories = ["conversation", "monologue", "interview", "story", "news", "music", "other"];
     return validCategories.includes(result) ? result : "monologue";
@@ -35,16 +55,18 @@ Transcript:
 };
 
 export const translateAi = async (krio: string) => {
-  const chatCompletion = await groq.chat.completions.create({
-    messages: [
+  try {
+    const chatCompletion = await createGroqCompletion([
       {
         role: "user",
         content: `Translate this "${krio}" to English only give the plain text `,
       },
-    ],
-    model: "openai/gpt-oss-20b",
-  });
-  return chatCompletion.choices[0]?.message?.content || "";
+    ]);
+    return chatCompletion.choices[0]?.message?.content || "";
+  } catch (err) {
+    console.error("Translation error:", err);
+    return "";
+  }
 };
 
 export interface WordItem {
