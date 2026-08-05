@@ -28,7 +28,7 @@ import {
   getGroup,
   updateAudioAnnotations,
 } from "@/app/actions";
-import { translateAi, transscribeKrioAi } from "@/app/transcribe";
+import { categorizeAi, translateAi, transscribeKrioAi } from "@/app/transcribe";
 import { Uploader } from "./uploader";
 import { AssignGroupDialog } from "@/app/(admin)/components/assign-group-dialog";
 import { useUser } from "@clerk/nextjs";
@@ -435,36 +435,124 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
 
   // ─── Batch AI Processing ──────────────────────────────────────────────────
   const handleBatchTranscribe = async () => {
-    if (!group) return;
-    if (!confirm("This will transcribe all unannotated files in this group. Continue?")) return;
-    
+    if (!group || !group.audioFiles || group.audioFiles.length === 0) {
+      toast.error("No audio files available in this group.");
+      return;
+    }
+
+    const pendingFiles = group.audioFiles.filter(
+      (f) =>
+        !f.annotations?.transcriptKrio ||
+        !f.annotations?.transcriptEnglish ||
+        (f.annotations?.status !== "completed" && f.annotations?.status !== "verified")
+    );
+
+    const filesToProcess = pendingFiles.length > 0 ? pendingFiles : group.audioFiles;
+
+    const confirmMsg =
+      pendingFiles.length > 0
+        ? `This will generate Krio transcriptions, English translations, and mark ${filesToProcess.length} file(s) as Completed. Continue?`
+        : `All files in this group are already completed. Do you want to re-process all ${filesToProcess.length} file(s) with AI?`;
+
+    if (!confirm(confirmMsg)) return;
+
     setIsBatchProcessing(true);
+    const toastId = toast.loading(`Starting batch AI processing for ${filesToProcess.length} file(s)...`);
+
     try {
-      const unannotatedFiles = (group.audioFiles || []).filter(f => !f.annotations?.transcriptKrio);
-      
-      for (const file of unannotatedFiles) {
-        const krio = await transscribeKrioAi(file.url);
-        const english = await translateAi(krio);
-        
-        const newAnnotations: AudioAnnotations = {
-          ...file.annotations!,
-          transcriptKrio: krio,
-          transcriptEnglish: english,
-          status: "completed"
-        };
-        
-        await updateAudioAnnotations(group.id, file.id, newAnnotations);
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (let i = 0; i < filesToProcess.length; i++) {
+        const file = filesToProcess[i];
+        toast.loading(`Processing file ${i + 1} of ${filesToProcess.length}: ${file.name}`, { id: toastId });
+
+        try {
+          let krioText = file.annotations?.transcriptKrio || "";
+          let speakerTags = file.annotations?.speakerTags || [];
+
+          // 1. Krio Transcription
+          if (!krioText.trim()) {
+            const res: any = await transscribeKrioAi(file.url);
+            if (typeof res === "string") {
+              krioText = res;
+            } else if (res) {
+              krioText = res.text || res.rawText || "";
+              if (res.speakerTags && res.speakerTags.length > 0) {
+                speakerTags = res.speakerTags;
+              }
+            }
+          }
+
+          // 2. Auto English Translation
+          let englishText = file.annotations?.transcriptEnglish || "";
+          if (!englishText.trim() && krioText.trim()) {
+            englishText = await translateAi(krioText);
+          }
+
+          // 3. Category Auto-Detection
+          let category = file.annotations?.category || "";
+          if (!category.trim() && krioText.trim()) {
+            category = await categorizeAi(krioText);
+          }
+
+          // 4. Ensure speakerTags fallback
+          const finalSpeakerTags =
+            speakerTags.length > 0
+              ? speakerTags
+              : (file.annotations?.speakerTags?.length ? file.annotations.speakerTags : [{ time: 0, label: "Speaker A" }]);
+
+          // 5. Prepare updated annotations marked as "completed"
+          const newAnnotations: AudioAnnotations = {
+            ...file.annotations,
+            transcriptKrio: krioText,
+            transcriptEnglish: englishText,
+            speakerTags: finalSpeakerTags,
+            category: category || "monologue",
+            status: "completed",
+          };
+
+          // 4. Save to DB
+          await updateAudioAnnotations(group.id, file.id, newAnnotations);
+          successCount++;
+
+          // 5. Update local group state for live UI feedback
+          setGroup((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              audioFiles: (prev.audioFiles || []).map((f) =>
+                f.id === file.id ? { ...f, annotations: newAnnotations } : f
+              ),
+            };
+          });
+
+          // 6. Update selectedAudio if currently open in player
+          if (selectedAudio?.id === file.id) {
+            setSelectedAudio((prev) =>
+              prev ? { ...prev, annotations: newAnnotations } : null
+            );
+          }
+        } catch (err) {
+          console.error(`Error processing audio file ${file.name}:`, err);
+          errorCount++;
+        }
       }
-      
-      // Refresh group data
+
+      // Refresh final group data from server
       const updatedGroup = await getGroup(group.id);
       if (updatedGroup) setGroup(updatedGroup);
-      
+
       router.refresh();
-      toast.success(`Batch transcription complete for ${unannotatedFiles.length} files.`);
+
+      if (errorCount === 0) {
+        toast.success(`Batch processing complete for ${successCount} file(s). All marked as completed!`, { id: toastId });
+      } else {
+        toast.warning(`Batch processing finished: ${successCount} processed, ${errorCount} failed.`, { id: toastId });
+      }
     } catch (err) {
       console.error("Batch transcription error:", err);
-      toast.error("An error occurred during batch transcription.");
+      toast.error("An error occurred during batch transcription.", { id: toastId });
     } finally {
       setIsBatchProcessing(false);
     }

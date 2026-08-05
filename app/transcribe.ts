@@ -9,6 +9,31 @@ const client = new ElevenLabsClient({
   environment: "https://api.elevenlabs.io",
 });
 
+export const categorizeAi = async (text: string): Promise<string> => {
+  if (!text || !text.trim()) return "monologue";
+  try {
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "user",
+          content: `Classify the following audio transcript into EXACTLY ONE category from this list: ["conversation", "monologue", "interview", "story", "news", "music", "other"].
+Output ONLY the category keyword in lowercase with no punctuation or extra words.
+
+Transcript:
+"${text}"`,
+        },
+      ],
+      model: "openai/gpt-oss-20b",
+    });
+    const result = chatCompletion.choices[0]?.message?.content?.trim().toLowerCase() || "monologue";
+    const validCategories = ["conversation", "monologue", "interview", "story", "news", "music", "other"];
+    return validCategories.includes(result) ? result : "monologue";
+  } catch (err) {
+    console.error("Categorize error:", err);
+    return "monologue";
+  }
+};
+
 export const translateAi = async (krio: string) => {
   const chatCompletion = await groq.chat.completions.create({
     messages: [
@@ -56,7 +81,8 @@ function groupWordsBySpeaker(words: WordItem[]): SpeakerSegment[] {
   let currentSegment: SpeakerSegment | null = null;
 
   for (const item of words) {
-    const speakerId = item.speakerId || "speaker_0";
+    const rawSpeaker = item.speakerId || "speaker_0";
+    const speakerId = rawSpeaker === "speaker_0" ? "Speaker A" : rawSpeaker === "speaker_1" ? "Speaker B" : rawSpeaker;
 
     if (!currentSegment || currentSegment.speakerId !== speakerId) {
       if (currentSegment) {
@@ -83,7 +109,9 @@ function groupWordsBySpeaker(words: WordItem[]): SpeakerSegment[] {
   return segments;
 }
 
-export const transscribeKrioAi = async (file: any): Promise<TranscribeResult> => {
+export const transscribeKrioAi = async (
+  file: any,
+): Promise<TranscribeResult> => {
   const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
     https.get(file, (response) => {
       const chunks: Buffer[] = [];
@@ -103,8 +131,6 @@ export const transscribeKrioAi = async (file: any): Promise<TranscribeResult> =>
     file: audioFile!,
     diarize: true,
   });
-
-  console.log(transcribe);
 
   const words: WordItem[] = transcribe.words || [];
   const segments = groupWordsBySpeaker(words);
