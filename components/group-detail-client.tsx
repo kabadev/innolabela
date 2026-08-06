@@ -58,6 +58,7 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   const [searchQuery, setSearchQuery] = useState("");
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [isExportingZip, setIsExportingZip] = useState(false);
+  const [downloadingType, setDownloadingType] = useState<string | null>(null);
 
   // Read selected audio from URL on mount and when URL changes
   useEffect(() => {
@@ -249,109 +250,33 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
   };
 
   // ─── Export Helpers ───────────────────────────────────────────────────────
-  const exportToJSON = () => {
-    if (!group) return;
-    const data = {
-      groupName: group.name,
-      groupId: group.id,
-      assignedTo: group.assigned,
-      exportedAt: new Date().toISOString(),
-      files: (group.audioFiles || []).map(f => ({
-        id: f.id,
-        name: f.name,
-        url: f.url,
-        duration: f.duration,
-        groupId: f.groupId || group.id,
-        groupName: group.name,
-        category: f.annotations?.category || "",
-        status: f.annotations?.status || "pending",
-        transcriptKrio: f.annotations?.transcriptKrio || "",
-        transcriptEnglish: f.annotations?.transcriptEnglish || "",
-        speakerTags: f.annotations?.speakerTags || [],
-        annotations: f.annotations || {}
-      }))
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${group.name}_annotations.json`;
-    link.click();
+  // ─── Export Helpers ───────────────────────────────────────────────────────
+  const getCompletedFiles = () => {
+    if (!group?.audioFiles) return [];
+    return group.audioFiles.filter(
+      (f) =>
+        f.annotations?.status === "completed" ||
+        f.annotations?.status === "verified" ||
+        (Boolean(f.annotations?.transcriptKrio) && Boolean(f.annotations?.transcriptEnglish))
+    );
   };
 
-  const exportToCSV = () => {
+  const exportToJSON = async () => {
     if (!group) return;
-    const headers = [
-      "ID",
-      "Name",
-      "URL",
-      "Duration",
-      "Group ID",
-      "Group Name",
-      "Category",
-      "Status",
-      "Krio Transcript",
-      "English Transcript",
-      "Speaker Tags"
-    ];
-    const rows = (group.audioFiles || []).map(f => [
-      `"${f.id || ""}"`,
-      `"${(f.name || "").replace(/"/g, '""')}"`,
-      `"${(f.url || "").replace(/"/g, '""')}"`,
-      f.duration || 0,
-      `"${f.groupId || group.id || ""}"`,
-      `"${(group.name || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.category || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.status || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
-      `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
-    ]);
-    const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${group.name}_annotations.csv`;
-    link.click();
-  };
-
-  const exportToSRT = () => {
-    if (!group) return;
-    let srtContent = "";
-    (group.audioFiles || []).forEach((f, i) => {
-      if (f.annotations?.transcriptEnglish || f.annotations?.transcriptKrio) {
-        const text = f.annotations.transcriptEnglish || f.annotations.transcriptKrio;
-        srtContent += `${i + 1}\n`;
-        srtContent += `00:00:00,000 --> ${new Date((f.duration || 20) * 1000).toISOString().substr(11, 12).replace('.', ',')}\n`;
-        srtContent += `${text}\n\n`;
-      }
-    });
-    const blob = new Blob([srtContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${group.name}_annotations.srt`;
-    link.click();
-  };
-
-  const exportToZip = async () => {
-    if (isExportingZip || !group) return;
-    setIsExportingZip(true);
-    const toastId = toast.loading(`Preparing offline dataset for ${group.name}...`);
-    const groupAudioFiles = group.audioFiles || [];
-
+    const completedFiles = getCompletedFiles();
+    if (completedFiles.length === 0) {
+      toast.error("No completed audio files found to export in this group.");
+      return;
+    }
+    setDownloadingType("json");
     try {
-      const zip = new JSZip();
-      const audioFolder = zip.folder("audios");
-      
-      // 1. Add JSON data with all fields
-      const jsonData = {
+      const data = {
         groupName: group.name,
         groupId: group.id,
         assignedTo: group.assigned,
         exportedAt: new Date().toISOString(),
-        files: groupAudioFiles.map(f => ({
+        totalCompletedFiles: completedFiles.length,
+        files: completedFiles.map((f) => ({
           id: f.id,
           name: f.name,
           url: f.url,
@@ -359,13 +284,152 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
           groupId: f.groupId || group.id,
           groupName: group.name,
           category: f.annotations?.category || "",
-          status: f.annotations?.status || "pending",
+          status: f.annotations?.status || "completed",
           transcriptKrio: f.annotations?.transcriptKrio || "",
           transcriptEnglish: f.annotations?.transcriptEnglish || "",
           speakerTags: f.annotations?.speakerTags || [],
           annotations: f.annotations || {},
-          localPath: `audios/${f.name}`
-        }))
+        })),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${group.name}_completed_annotations.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${completedFiles.length} completed audio file(s) to JSON.`);
+    } catch (err) {
+      console.error("Export JSON error:", err);
+      toast.error("Failed to export JSON.");
+    } finally {
+      setDownloadingType(null);
+    }
+  };
+
+  const exportToCSV = async () => {
+    if (!group) return;
+    const completedFiles = getCompletedFiles();
+    if (completedFiles.length === 0) {
+      toast.error("No completed audio files found to export in this group.");
+      return;
+    }
+    setDownloadingType("csv");
+    try {
+      const headers = [
+        "ID",
+        "Name",
+        "URL",
+        "Duration",
+        "Group ID",
+        "Group Name",
+        "Category",
+        "Status",
+        "Krio Transcript",
+        "English Transcript",
+        "Speaker Tags",
+      ];
+      const rows = completedFiles.map((f) => [
+        `"${f.id || ""}"`,
+        `"${(f.name || "").replace(/"/g, '""')}"`,
+        `"${(f.url || "").replace(/"/g, '""')}"`,
+        f.duration || 0,
+        `"${f.groupId || group.id || ""}"`,
+        `"${(group.name || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.category || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.status || "completed").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.speakerTags?.map((s) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
+      ]);
+      const csvContent = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${group.name}_completed_annotations.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${completedFiles.length} completed audio file(s) to CSV.`);
+    } catch (err) {
+      console.error("Export CSV error:", err);
+      toast.error("Failed to export CSV.");
+    } finally {
+      setDownloadingType(null);
+    }
+  };
+
+  const exportToSRT = async () => {
+    if (!group) return;
+    const completedFiles = getCompletedFiles();
+    if (completedFiles.length === 0) {
+      toast.error("No completed audio files found to export in this group.");
+      return;
+    }
+    setDownloadingType("srt");
+    try {
+      let srtContent = "";
+      completedFiles.forEach((f, i) => {
+        if (f.annotations?.transcriptEnglish || f.annotations?.transcriptKrio) {
+          const text = f.annotations.transcriptEnglish || f.annotations.transcriptKrio;
+          srtContent += `${i + 1}\n`;
+          srtContent += `00:00:00,000 --> ${new Date((f.duration || 20) * 1000).toISOString().substr(11, 12).replace(".", ",")}\n`;
+          srtContent += `${text}\n\n`;
+        }
+      });
+      const blob = new Blob([srtContent], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${group.name}_completed_annotations.srt`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${completedFiles.length} completed subtitle(s) to SRT.`);
+    } catch (err) {
+      console.error("Export SRT error:", err);
+      toast.error("Failed to export SRT.");
+    } finally {
+      setDownloadingType(null);
+    }
+  };
+
+  const exportToZip = async () => {
+    if (downloadingType !== null || isExportingZip || !group) return;
+    const completedFiles = getCompletedFiles();
+    if (completedFiles.length === 0) {
+      toast.error("No completed audio files found to export in this group.");
+      return;
+    }
+    setDownloadingType("zip");
+    setIsExportingZip(true);
+    const toastId = toast.loading(`Preparing offline dataset for ${completedFiles.length} completed files...`);
+
+    try {
+      const zip = new JSZip();
+      const audioFolder = zip.folder("audios");
+
+      // 1. Add JSON data with all fields
+      const jsonData = {
+        groupName: group.name,
+        groupId: group.id,
+        assignedTo: group.assigned,
+        exportedAt: new Date().toISOString(),
+        totalCompletedFiles: completedFiles.length,
+        files: completedFiles.map((f) => ({
+          id: f.id,
+          name: f.name,
+          url: f.url,
+          duration: f.duration,
+          groupId: f.groupId || group.id,
+          groupName: group.name,
+          category: f.annotations?.category || "",
+          status: f.annotations?.status || "completed",
+          transcriptKrio: f.annotations?.transcriptKrio || "",
+          transcriptEnglish: f.annotations?.transcriptEnglish || "",
+          speakerTags: f.annotations?.speakerTags || [],
+          annotations: f.annotations || {},
+          localPath: `audios/${f.name}`,
+        })),
       };
       zip.file("dataset.json", JSON.stringify(jsonData, null, 2));
 
@@ -382,9 +446,9 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
         "Krio Transcript",
         "English Transcript",
         "Speaker Tags",
-        "Local Path"
+        "Local Path",
       ];
-      const rows = groupAudioFiles.map(f => [
+      const rows = completedFiles.map((f) => [
         `"${f.id || ""}"`,
         `"${(f.name || "").replace(/"/g, '""')}"`,
         `"${(f.url || "").replace(/"/g, '""')}"`,
@@ -392,18 +456,18 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
         `"${f.groupId || group.id || ""}"`,
         `"${(group.name || "").replace(/"/g, '""')}"`,
         `"${(f.annotations?.category || "").replace(/"/g, '""')}"`,
-        `"${(f.annotations?.status || "").replace(/"/g, '""')}"`,
+        `"${(f.annotations?.status || "completed").replace(/"/g, '""')}"`,
         `"${(f.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
         `"${(f.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
-        `"${(f.annotations?.speakerTags?.map(s => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
-        `"audios/${f.name}"`
+        `"${(f.annotations?.speakerTags?.map((s) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
+        `"audios/${f.name}"`,
       ]);
-      const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+      const csvContent = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
       zip.file("dataset.csv", csvContent);
 
       // 3. Add Audio files
-      console.log(`Starting to download ${groupAudioFiles.length} audio files...`);
-      const downloadPromises = groupAudioFiles.map(async (f) => {
+      console.log(`Starting to download ${completedFiles.length} completed audio files...`);
+      const downloadPromises = completedFiles.map(async (f) => {
         try {
           const response = await fetch(f.url);
           if (!response.ok) throw new Error(`Failed to fetch ${f.name}`);
@@ -421,15 +485,17 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
       const url = URL.createObjectURL(content);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${group.name}_offline_dataset.zip`;
+      link.download = `${group.name}_completed_dataset.zip`;
       link.click();
-      
-      toast.success("Offline dataset downloaded successfully", { id: toastId });
+      URL.revokeObjectURL(url);
+
+      toast.success(`Offline dataset with ${completedFiles.length} completed files downloaded successfully`, { id: toastId });
     } catch (error) {
       console.error("Zip export error:", error);
       toast.error("Failed to generate offline dataset", { id: toastId });
     } finally {
       setIsExportingZip(false);
+      setDownloadingType(null);
     }
   };
 
@@ -615,28 +681,47 @@ export function GroupDetailClient({ initialGroup, initialGlossary = [] }: GroupD
             <div className="flex items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="flex-1 text-xs">
-                    <Download className="w-3.5 h-3.5 mr-1.5" />
-                    Export
+                  <Button variant="outline" size="sm" className="flex-1 text-xs" disabled={downloadingType !== null}>
+                    {downloadingType !== null ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                    )}
+                    {downloadingType !== null ? "Downloading..." : "Export"}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={exportToJSON}>
-                    <FileJson className="w-4 h-4 mr-2" /> JSON
+                  <DropdownMenuItem onClick={exportToJSON} disabled={downloadingType !== null}>
+                    {downloadingType === "json" ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <FileJson className="w-4 h-4 mr-2" />
+                    )}
+                    {downloadingType === "json" ? "Downloading..." : "JSON"}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={exportToCSV}>
-                    <FileText className="w-4 h-4 mr-2" /> CSV
+                  <DropdownMenuItem onClick={exportToCSV} disabled={downloadingType !== null}>
+                    {downloadingType === "csv" ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <FileText className="w-4 h-4 mr-2" />
+                    )}
+                    {downloadingType === "csv" ? "Downloading..." : "CSV"}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={exportToSRT}>
-                    <FileCode className="w-4 h-4 mr-2" /> SRT (Subtitles)
+                  <DropdownMenuItem onClick={exportToSRT} disabled={downloadingType !== null}>
+                    {downloadingType === "srt" ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <FileCode className="w-4 h-4 mr-2" />
+                    )}
+                    {downloadingType === "srt" ? "Downloading..." : "SRT (Subtitles)"}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={exportToZip} disabled={isExportingZip}>
-                    {isExportingZip ? (
+                  <DropdownMenuItem onClick={exportToZip} disabled={downloadingType !== null}>
+                    {downloadingType === "zip" ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     ) : (
                       <Archive className="w-4 h-4 mr-2" />
                     )}
-                    ZIP (Offline Dataset)
+                    {downloadingType === "zip" ? "Downloading..." : "ZIP (Offline Dataset)"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

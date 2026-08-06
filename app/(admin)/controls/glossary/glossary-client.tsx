@@ -78,6 +78,8 @@ export function GlossaryClient({ initialEntries }: { initialEntries: any[] }) {
   const [isImporting, setIsImporting] = useState(false);
   const [editingEntry, setEditingEntry] = useState<any>(null);
   const [isPending, setIsPending] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -181,19 +183,31 @@ export function GlossaryClient({ initialEntries }: { initialEntries: any[] }) {
           <Button
             variant="outline"
             className="gap-2"
-            onClick={() => {
-              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(entries, null, 2));
-              const downloadAnchorNode = document.createElement('a');
-              downloadAnchorNode.setAttribute("href", dataStr);
-              downloadAnchorNode.setAttribute("download", "glossary_export.json");
-              document.body.appendChild(downloadAnchorNode);
-              downloadAnchorNode.click();
-              downloadAnchorNode.remove();
-              toast.success("Glossary exported as JSON");
+            disabled={isExporting}
+            onClick={async () => {
+              setIsExporting(true);
+              try {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(entries, null, 2));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "glossary_export.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+                toast.success("Glossary exported as JSON");
+              } catch (err) {
+                toast.error("Failed to export glossary");
+              } finally {
+                setIsExporting(false);
+              }
             }}
           >
-            <Download className="w-4 h-4" />
-            Export
+            {isExporting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            {isExporting ? "Downloading..." : "Export"}
           </Button>
 
           <Dialog open={isImporting} onOpenChange={(open) => {
@@ -234,18 +248,24 @@ export function GlossaryClient({ initialEntries }: { initialEntries: any[] }) {
                     <Button 
                       variant="link" 
                       className="h-auto p-0 text-[10px] text-indigo-600"
+                      disabled={isDownloadingTemplate}
                       onClick={() => {
-                        const csvContent = "data:text/csv;charset=utf-8,krio,meaning,variant,example,translation\ndae,is at / progressive,dey,A dae go market.,I am going to the market.";
-                        const encodedUri = encodeURI(csvContent);
-                        const link = document.createElement("a");
-                        link.setAttribute("href", encodedUri);
-                        link.setAttribute("download", "glossary_template.csv");
-                        document.body.appendChild(link);
-                        link.click();
-                        link.remove();
+                        setIsDownloadingTemplate(true);
+                        try {
+                          const csvContent = "data:text/csv;charset=utf-8,krio,meaning,variant,example,translation\ndae,is at / progressive,dey,A dae go market.,I am going to the market.";
+                          const encodedUri = encodeURI(csvContent);
+                          const link = document.createElement("a");
+                          link.setAttribute("href", encodedUri);
+                          link.setAttribute("download", "glossary_template.csv");
+                          document.body.appendChild(link);
+                          link.click();
+                          link.remove();
+                        } finally {
+                          setIsDownloadingTemplate(false);
+                        }
                       }}
                     >
-                      Download CSV Template
+                      {isDownloadingTemplate ? "Downloading..." : "Download CSV Template"}
                     </Button>
                   </div>
 

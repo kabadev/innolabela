@@ -30,10 +30,12 @@ import {
   Pause,
   Eye,
   Archive,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import JSZip from "jszip";
 import { AudioFileWithGroup, getAudioFiles } from "@/app/actions";
+import { toast } from "sonner";
 
 export function AudioFilesTable({ userId }: { userId?: string }) {
   const [audioFiles, setAudioFiles] = useState<AudioFileWithGroup[]>([]);
@@ -47,7 +49,7 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
   const [selectedDate, setSelectedDate] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [playingId, setPlayingId] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingType, setDownloadingType] = useState<string | null>(null);
   const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
 
   const fetchAudioFiles = async () => {
@@ -101,101 +103,150 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
     }
   };
 
-  const exportToJSON = () => {
-    const exportData = audioFiles.map((file) => ({
-      id: file.id || (file as any)._id,
-      name: file.name,
-      url: file.url,
-      duration: file.duration,
-      groupId: file.groupId,
-      category: file.annotations?.category || "",
-      status: file.annotations?.status || "pending",
-      transcriptKrio: file.annotations?.transcriptKrio || "",
-      transcriptEnglish: file.annotations?.transcriptEnglish || "",
-      speakerTags: file.annotations?.speakerTags || [],
-      annotations: file.annotations || {}
-    }));
+  const isFileCompleted = (file: any) =>
+    file.annotations?.status === "completed" ||
+    file.annotations?.status === "verified" ||
+    (Boolean(file.annotations?.transcriptKrio) &&
+      Boolean(file.annotations?.transcriptEnglish));
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-      type: "application/json",
+  const fetchAllCompletedAudioFilesFromDB = async () => {
+    const result = await getAudioFiles({
+      page: 1,
+      limit: 10000,
+      search: "",
+      completedFilter: "all",
+      selectedDate: "",
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audio-files-${new Date().toISOString()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return (result.audioFiles || []).filter(isFileCompleted);
   };
 
-  const exportToCSV = () => {
-    const headers = [
-      "ID",
-      "Name",
-      "Audio URL",
-      "Duration",
-      "Group ID",
-      "Category",
-      "Status",
-      "Krio Transcript",
-      "English Transcript",
-      "Speaker Tags"
-    ];
+  const exportToJSON = async () => {
+    setDownloadingType("json");
+    try {
+      const completedFiles = await fetchAllCompletedAudioFilesFromDB();
+      if (completedFiles.length === 0) {
+        toast.error("No completed audio files found in database.");
+        return;
+      }
+      const exportData = completedFiles.map((file: any) => ({
+        id: file.id || (file as any)._id,
+        name: file.name,
+        url: file.url,
+        duration: file.duration,
+        groupId: file.groupId,
+        groupName: file.groupName,
+        category: file.annotations?.category || "",
+        status: file.annotations?.status || "completed",
+        transcriptKrio: file.annotations?.transcriptKrio || "",
+        transcriptEnglish: file.annotations?.transcriptEnglish || "",
+        speakerTags: file.annotations?.speakerTags || [],
+        annotations: file.annotations || {},
+      }));
 
-    const rows = audioFiles.map((file) => [
-      `"${file.id || (file as any)._id || ""}"`,
-      `"${(file.name || "").replace(/"/g, '""')}"`,
-      `"${(file.url || "").replace(/"/g, '""')}"`,
-      file.duration || 0,
-      `"${file.groupId || ""}"`,
-      `"${(file.annotations?.category || "").replace(/"/g, '""')}"`,
-      `"${(file.annotations?.status || "").replace(/"/g, '""')}"`,
-      `"${(file.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
-      `"${(file.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
-      `"${(file.annotations?.speakerTags?.map((s) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
-    ]);
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `all-completed-audio-files-${new Date().toISOString()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(
+        `Exported ${completedFiles.length} completed audio file(s) from database to JSON.`,
+      );
+    } catch (err) {
+      console.error("Export JSON error:", err);
+      toast.error("Failed to export JSON.");
+    } finally {
+      setDownloadingType(null);
+    }
+  };
 
-    const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+  const exportToCSV = async () => {
+    setDownloadingType("csv");
+    try {
+      const completedFiles = await fetchAllCompletedAudioFilesFromDB();
+      if (completedFiles.length === 0) {
+        toast.error("No completed audio files found in database.");
+        return;
+      }
+      const headers = [
+        "ID",
+        "Name",
+        "Audio URL",
+        "Duration",
+        "Group ID",
+        "Group Name",
+        "Category",
+        "Status",
+        "Krio Transcript",
+        "English Transcript",
+        "Speaker Tags",
+      ];
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audio-files-${new Date().toISOString()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+      const rows = completedFiles.map((file: any) => [
+        `"${file.id || (file as any)._id || ""}"`,
+        `"${(file.name || "").replace(/"/g, '""')}"`,
+        `"${(file.url || "").replace(/"/g, '""')}"`,
+        file.duration || 0,
+        `"${file.groupId || ""}"`,
+        `"${(file.groupName || "").replace(/"/g, '""')}"`,
+        `"${(file.annotations?.category || "").replace(/"/g, '""')}"`,
+        `"${(file.annotations?.status || "completed").replace(/"/g, '""')}"`,
+        `"${(file.annotations?.transcriptKrio || "").replace(/"/g, '""')}"`,
+        `"${(file.annotations?.transcriptEnglish || "").replace(/"/g, '""')}"`,
+        `"${(file.annotations?.speakerTags?.map((s: any) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
+      ]);
+
+      const csvContent = [
+        headers.join(","),
+        ...rows.map((row: any) => row.join(",")),
+      ].join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `all-completed-audio-files-${new Date().toISOString()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(
+        `Exported ${completedFiles.length} completed audio file(s) from database to CSV.`,
+      );
+    } catch (err) {
+      console.error("Export CSV error:", err);
+      toast.error("Failed to export CSV.");
+    } finally {
+      setDownloadingType(null);
+    }
   };
 
   const downloadZip = async () => {
-    setDownloading(true);
+    setDownloadingType("zip");
+    const toastId = toast.loading(
+      "Preparing ZIP archive of all completed audio files in database...",
+    );
     try {
-      // Fetch all audio files (not just current page)
-      const allFilesResult = await getAudioFiles({
-        page: 1,
-        limit: 10000, // Get all files
-        search,
-        completedFilter,
-        selectedDate,
-      });
+      const allFiles = await fetchAllCompletedAudioFilesFromDB();
+      if (allFiles.length === 0) {
+        toast.error("No completed audio files found in database.", {
+          id: toastId,
+        });
+        return;
+      }
 
-      const allFiles = allFilesResult.audioFiles;
       const zip = new JSZip();
-
-      // Create audio folder
       const audioFolder = zip.folder("audio");
-
-      // Prepare data for JSON and CSV
       const exportData: Array<any> = [];
 
-      // Download and add each audio file to the zip
       for (let i = 0; i < allFiles.length; i++) {
         const file = allFiles[i];
 
         try {
-          // Fetch audio file as blob
           const response = await fetch(file.url);
           const audioBlob = await response.blob();
 
-          // Extract filename from URL or create one
           const urlParts = file.url.split("/");
           const originalFilename = urlParts[urlParts.length - 1];
           const extension = originalFilename.includes(".")
@@ -203,10 +254,8 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
             : "wav";
           const filename = `${file.name || `audio_${i + 1}`}.${extension}`;
 
-          // Add audio file to audio folder
           audioFolder?.file(filename, audioBlob);
 
-          // Add to export data with all fields
           exportData.push({
             id: file.id || (file as any)._id,
             name: file.name,
@@ -214,26 +263,22 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
             localPath: `/audio/${filename}`,
             duration: file.duration,
             groupId: file.groupId,
+            groupName: file.groupName,
             category: file.annotations?.category || "",
-            status: file.annotations?.status || "pending",
+            status: file.annotations?.status || "completed",
             transcriptKrio: file.annotations?.transcriptKrio || "",
             transcriptEnglish: file.annotations?.transcriptEnglish || "",
             speakerTags: file.annotations?.speakerTags || [],
-            annotations: file.annotations || {}
+            annotations: file.annotations || {},
           });
         } catch (error) {
-          console.error(
-            `[v0] Error downloading audio file ${file.name}:`,
-            error
-          );
+          console.error(`Error downloading audio file ${file.name}:`, error);
         }
       }
 
-      // Create JSON file
       const jsonContent = JSON.stringify(exportData, null, 2);
       zip.file("data.json", jsonContent);
 
-      // Create CSV file
       const headers = [
         "ID",
         "Name",
@@ -241,11 +286,12 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
         "Local Path",
         "Duration",
         "Group ID",
+        "Group Name",
         "Category",
         "Status",
         "Krio Transcript",
         "English Transcript",
-        "Speaker Tags"
+        "Speaker Tags",
       ];
       const csvRows = exportData.map((row) => [
         `"${row.id || ""}"`,
@@ -254,29 +300,38 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
         `"${(row.localPath || "").replace(/"/g, '""')}"`,
         row.duration || 0,
         `"${row.groupId || ""}"`,
+        `"${(row.groupName || "").replace(/"/g, '""')}"`,
         `"${(row.category || "").replace(/"/g, '""')}"`,
-        `"${(row.status || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "completed").replace(/"/g, '""')}"`,
         `"${(row.transcriptKrio || "").replace(/"/g, '""')}"`,
         `"${(row.transcriptEnglish || "").replace(/"/g, '""')}"`,
-        `"${(row.speakerTags?.map((s: any) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`
+        `"${(row.speakerTags?.map((s: any) => `[${s.time}s: ${s.label}]`).join("; ") || "").replace(/"/g, '""')}"`,
       ]);
 
-      const csvContent = [headers.join(","), ...csvRows.map((r) => r.join(","))].join("\n");
+      const csvContent = [
+        headers.join(","),
+        ...csvRows.map((r) => r.join(",")),
+      ].join("\n");
       zip.file("data.csv", csvContent);
 
-      // Generate and download zip
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `audio-files-${new Date().toISOString()}.zip`;
+      a.download = `all-completed-audio-dataset-${new Date().toISOString()}.zip`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.success(
+        `Exported ZIP containing ${allFiles.length} completed audio file(s) from database.`,
+        { id: toastId },
+      );
     } catch (error) {
-      console.error("[v0] Error creating zip file:", error);
-      alert("Error creating zip file. Please try again.");
+      console.error("Error creating zip file:", error);
+      toast.error("Error creating ZIP file. Please try again.", {
+        id: toastId,
+      });
     } finally {
-      setDownloading(false);
+      setDownloadingType(null);
     }
   };
 
@@ -362,22 +417,59 @@ export function AudioFilesTable({ userId }: { userId?: string }) {
 
           {/* Export Buttons */}
           <div className="flex gap-2">
-            <Button onClick={exportToJSON} variant="outline" size="sm">
-              <Download className="mr-2 h-4 w-4" />
-              Export JSON
+            <Button
+              onClick={exportToJSON}
+              variant="outline"
+              size="sm"
+              disabled={downloadingType !== null}
+            >
+              {downloadingType === "json" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Export JSON
+                </>
+              )}
             </Button>
-            <Button onClick={exportToCSV} variant="outline" size="sm">
-              <Download className="mr-2 h-4 w-4" />
-              Export CSV
+            <Button
+              onClick={exportToCSV}
+              variant="outline"
+              size="sm"
+              disabled={downloadingType !== null}
+            >
+              {downloadingType === "csv" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Export CSV
+                </>
+              )}
             </Button>
             <Button
               onClick={downloadZip}
               variant="outline"
               size="sm"
-              disabled={downloading}
+              disabled={downloadingType !== null}
             >
-              <Archive className="mr-2 h-4 w-4" />
-              {downloading ? "Creating Zip..." : "Download Zip"}
+              {downloadingType === "zip" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Archive className="mr-2 h-4 w-4" />
+                  Download Zip
+                </>
+              )}
             </Button>
           </div>
         </div>
